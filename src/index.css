@@ -1,0 +1,407 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Infant:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500&family=Jost:wght@300;400;500;600&display=swap');
+@import 'tailwindcss';
+
+:root {
+  --bg-main: #FBFAF7;
+  --bg-soft: #F3EEE8;
+  --bg-dark: #2B1C1A;
+  --maroon: #7A0C32;
+  --maroon-deep: #4E1D16;
+  --red: #880001;
+  --terracotta: #A33B1B;
+  --copper: #BC7442;
+  --gold: #C9A227;
+  --text-main: #2B1C1A;
+  --text-muted: #8A7F7C;
+  --line: #E3DCD6;
+  --text-on-dark: #FBFAF7;
+}
+
+@theme {
+  --font-serif: 'Cormorant Infant', Georgia, serif;
+  --font-sans: 'Jost', system-ui, sans-serif;
+
+  --color-bg-main: var(--bg-main);
+  --color-bg-soft: var(--bg-soft);
+  --color-bg-dark: var(--bg-dark);
+  --color-maroon: var(--maroon);
+  --color-maroon-deep: var(--maroon-deep);
+  --color-red: var(--red);
+  --color-terracotta: var(--terracotta);
+  --color-copper: var(--copper);
+  --color-gold: var(--gold);
+  --color-text-main: var(--text-main);
+  --color-text-muted: var(--text-muted);
+  --color-line: var(--line);
+  --color-text-on-dark: var(--text-on-dark);
+
+  /* Map existing classes across all components to the new variable palette */
+  --color-ivory: var(--bg-main);
+  --color-cream: var(--bg-soft);
+  --color-charcoal: var(--bg-dark);
+  --color-champagne: var(--gold);
+  --color-wine: var(--maroon);
+  --color-warm-gray: var(--text-muted);
+  --color-border: var(--line);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  overscroll-behavior-x: none;
+}
+
+body {
+  font-family: 'Jost', system-ui, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+/* Base section alternating rules */
+section.bg-ivory, .bg-ivory {
+  background-color: var(--bg-main) !important;
+}
+
+section.bg-cream, .bg-cream {
+  background-color: var(--bg-soft) !important;
+}
+
+section.bg-charcoal, .bg-charcoal, footer {
+  background-color: var(--bg-dark) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Primary buttons: --maroon background, --text-on-dark text; hover to --maroon-deep */
+button.bg-champagne,
+button.bg-wine,
+a.bg-champagne,
+a.bg-wine,
+.btn-primary {
+  background-color: var(--maroon) !important;
+  color: var(--text-on-dark) !important;
+  border-color: transparent !important;
+  transition: background-color 0.25s ease, transform 0.2s ease;
+}
+
+button.bg-champagne:hover,
+button.bg-wine:hover,
+a.bg-champagne:hover,
+a.bg-wine:hover,
+.btn-primary:hover {
+  background-color: var(--maroon-deep) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Secondary buttons: transparent with a --maroon border, hover to --terracotta / --maroon */
+button.border-champagne,
+button.border-gold,
+button.border-white\/50,
+.btn-secondary {
+  background-color: transparent !important;
+  border-color: var(--maroon) !important;
+  color: var(--maroon) !important;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+button.border-champagne:hover,
+button.border-gold:hover,
+button.border-white\/50:hover,
+.btn-secondary:hover {
+  background-color: var(--maroon) !important;
+  border-color: var(--maroon) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Secondary buttons on dark hero / dark banners */
+section.bg-charcoal button.border-white\/50,
+section.bg-charcoal button.border-champagne {
+  color: var(--text-on-dark) !important;
+  border-color: var(--copper) !important;
+}
+
+section.bg-charcoal button.border-white\/50:hover,
+section.bg-charcoal button.border-champagne:hover {
+  background-color: var(--maroon) !important;
+  border-color: var(--maroon) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Product cards: --bg-soft or white background, thin --line border, price in --maroon, hover border in --copper */
+.product-card-motion > div:first-child,
+div.aspect-\[3\/4\] {
+  background-color: var(--bg-soft) !important;
+  border: 1px solid var(--line) !important;
+  transition: border-color 0.3s ease, transform 0.3s ease;
+}
+
+.product-card-motion:hover > div:first-child,
+.group:hover div.aspect-\[3\/4\] {
+  border-color: var(--copper) !important;
+}
+
+/* Price styling in --maroon */
+.product-card-motion .text-sm.font-medium,
+div.aspect-\[3\/4\] + div .text-sm.font-medium {
+  color: var(--maroon) !important;
+}
+
+.product-card-motion .text-xs.line-through,
+div.aspect-\[3\/4\] + div .text-xs.line-through {
+  color: var(--text-muted) !important;
+}
+
+/* Add to bag / quick button on cards */
+div.aspect-\[3\/4\] button {
+  background-color: var(--maroon) !important;
+  color: var(--gold) !important;
+  border: 1px solid var(--copper) !important;
+}
+
+div.aspect-\[3\/4\] button:hover {
+  background-color: var(--maroon-deep) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Sale tags, badges, important accents use --red */
+span.bg-wine,
+.badge-sale {
+  background-color: var(--red) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Highlight words and italic accent text in headings use --gold */
+h1 em, h2 em, h3 em, em.text-champagne, em.text-gold, .text-gold, .text-champagne {
+  color: var(--gold) !important;
+}
+
+/* Navbar active link and underline use --maroon */
+header nav button.text-gold,
+header nav button[class*="text-gold"],
+header nav button.active {
+  color: var(--maroon) !important;
+}
+
+/* Footer & dark sections: --text-on-dark, --gold links on hover */
+footer,
+section.bg-charcoal {
+  color: var(--text-on-dark) !important;
+}
+
+footer a,
+footer button,
+footer p,
+section.bg-charcoal p {
+  color: var(--text-on-dark);
+}
+
+footer a:hover,
+footer button:hover,
+section.bg-charcoal a:hover,
+section.bg-charcoal button:hover {
+  color: var(--gold) !important;
+}
+
+/* Elimination of all green tones */
+.text-green-700, .text-green-800 {
+  color: var(--maroon) !important;
+}
+.bg-green-50 {
+  background-color: var(--bg-soft) !important;
+  color: var(--maroon) !important;
+}
+.border-green-200 {
+  border-color: var(--copper) !important;
+}
+.bg-\[\#25d366\], [class*="bg-[#25d366]"] {
+  background-color: var(--maroon) !important;
+}
+.bg-\[\#25d366\]:hover, [class*="bg-[#25d366]"]:hover {
+  background-color: var(--maroon-deep) !important;
+}
+
+/* Keep horizontal gestures inside intentional carousel regions. */
+[class*="overflow-x-auto"] {
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+[class*="overflow-x-auto"]::-webkit-scrollbar { display: none; }
+
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button, a { touch-action: manipulation; }
+img, video { max-width: 100%; }
+
+.home-best-sellers-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 24px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.home-best-sellers-row::-webkit-scrollbar {
+  display: none;
+}
+
+.home-products-marquee {
+  position: relative;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent 0, #000 6%, #000 94%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 6%, #000 94%, transparent 100%);
+}
+
+.home-products-marquee-track {
+  display: flex;
+  width: max-content;
+  gap: 24px;
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: home-products-marquee 45s linear infinite;
+}
+
+.home-products-marquee.is-paused .home-products-marquee-track {
+  animation-play-state: paused;
+}
+
+.home-best-seller-card,
+.shop-product-card {
+  flex: 0 0 auto;
+  width: clamp(260px, 28vw, 320px);
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transition: transform 0.25s ease, opacity 0.25s ease;
+  will-change: transform, opacity;
+}
+
+.shop-product-card {
+  width: 100%;
+  max-width: 100%;
+}
+
+.home-best-seller-card {
+  scroll-snap-align: start;
+}
+
+.shop-product-card:hover {
+  transform: perspective(900px) translateY(-8px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+}
+
+.shop-product-image {
+  display: block;
+  aspect-ratio: 3 / 4;
+  width: 100%;
+  height: auto;
+  border-radius: 20px;
+  transform: translate3d(var(--parallax-x, 0px), 0, 0) scale(1);
+  transition: transform 0.35s ease, opacity 0.25s ease;
+  object-fit: cover;
+}
+
+.shop-product-card:hover .shop-product-image {
+  transform: translate3d(var(--parallax-x, 0px), 0, 0) scale(1.06);
+}
+
+.wishlist-btn {
+  transform: scale(var(--heart-scale, 1));
+  transition: transform 0.18s ease;
+}
+
+.wishlist-btn:hover {
+  transform: scale(1.15);
+}
+
+.wishlist-btn.is-active {
+  transform: scale(var(--heart-scale, 1));
+}
+
+.shop-product-frame {
+  border-radius: 20px;
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+}
+
+@keyframes home-products-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@media (max-width: 767px) {
+  .home-best-seller-card,
+  .shop-product-card {
+    width: 72vw;
+    transform: none;
+  }
+
+  .shop-product-card:hover {
+    transform: none;
+  }
+
+  .shop-product-card:hover .shop-product-image {
+    transform: translate3d(var(--parallax-x, 0px), 0, 0) scale(1);
+  }
+}
+
+@media (max-width: 767px) {
+  .shop-product-card {
+    width: 72vw;
+    transform: none;
+  }
+
+  .shop-product-card:hover {
+    transform: none;
+  }
+
+  .shop-product-card:hover .shop-product-image {
+    transform: translate3d(var(--parallax-x, 0px), 0, 0) scale(1);
+  }
+}
+
+.page-transition {
+  animation: page-enter 360ms cubic-bezier(.22, .61, .36, 1) both;
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  html { overflow-x: hidden; }
+  body { min-width: 0; }
+  table { min-width: 640px; }
+  input, select, textarea { max-width: 100%; }
+  button { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .home-products-marquee-track {
+    animation: none;
+  }
+}
+
+/* Hide scrollbar but keep functionality */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--copper); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+/* Font helpers */
+.font-serif { font-family: 'Cormorant Infant', Georgia, serif; }
+.font-display { font-family: 'Cormorant Infant', Georgia, serif; }

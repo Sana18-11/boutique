@@ -1,0 +1,583 @@
+/* ==========================================================================
+   YAALE - High-End Luxury Motion & Interaction Styles
+   Palette:
+   --bg-main: #FBFAF7
+   --bg-soft: #F3EEE8
+   --bg-dark: #2B1C1A
+   --maroon: #7A0C32
+   --maroon-deep: #4E1D16
+   --red: #880001
+   --terracotta: #A33B1B
+   --copper: #BC7442
+   --gold: #C9A227
+   --text-main: #2B1C1A
+   --text-muted: #8A7F7C
+   --line: #E3DCD6
+   --text-on-dark: #FBFAF7
+   ========================================================================== */
+
+/* ── 1. PRELOADER & LOGO INTRO ────────────────────────────────────────── */
+#yaale-preloader {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background-color: var(--bg-main, #FBFAF7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  pointer-events: auto;
+  overflow: hidden;
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.6s ease;
+}
+
+#yaale-preloader.fade-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.yaale-preloader-logo-wrap {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform, opacity;
+}
+
+.yaale-preloader-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(43, 28, 26, 0.08));
+}
+
+.yaale-preloader-skip {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1px solid var(--line, #E3DCD6);
+  background: var(--bg-soft, #F3EEE8);
+  backdrop-filter: blur(8px);
+  color: var(--text-main, #2B1C1A);
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  font-family: 'Jost', system-ui, sans-serif;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  z-index: 10;
+}
+
+.yaale-preloader-skip:hover {
+  background: var(--maroon, #7A0C32);
+  color: var(--text-on-dark, #FBFAF7);
+  border-color: var(--maroon, #7A0C32);
+  transform: scale(1.04);
+}
+
+.yaale-preloader-skip:active {
+  transform: scale(0.96);
+}
+
+/* ── 2. SCROLL PROGRESS BAR ───────────────────────────────────────────── */
+#yaale-scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, var(--maroon, #7A0C32), var(--gold, #C9A227));
+  transform-origin: left center;
+  transform: scaleX(0);
+  z-index: 10000;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ── 3. NAVBAR MOTION & GLASS ─────────────────────────────────────────── */
+header.yaale-header {
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+              background-color 0.3s ease,
+              backdrop-filter 0.3s ease,
+              box-shadow 0.3s ease !important;
+  will-change: transform;
+}
+
+header.yaale-header.nav-hidden {
+  transform: translateY(-100%) !important;
+}
+
+header.yaale-header.nav-glass {
+  background-color: rgba(251, 250, 247, 0.85) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  box-shadow: 0 4px 20px rgba(43, 28, 26, 0.05) !important;
+  border-bottom: 1px solid var(--line, #E3DCD6) !important;
+}
+
+/* ── 4. WORD REVEAL WRAPPERS ──────────────────────────────────────────── */
+.word-reveal-wrap {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  margin-right: 0.22em;
+}
+
+.word-reveal-inner {
+  display: inline-block;
+  transform: translateY(115%);
+  will-change: transform;
+}
+
+/* ── 5. CURVED & WAVY SECTION DIVIDERS ────────────────────────────────── */
+.yaale-wave-divider {
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+  display: block;
+  pointer-events: none;
+  transform: translateZ(0);
+  position: relative;
+  z-index: 10;
+}
+
+.yaale-wave-divider svg {
+  display: block;
+  width: 100%;
+  height: 48px;
+  will-change: transform;
+}
+
+@media (min-width: 768px) {
+  .yaale-wave-divider svg {
+    height: 72px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .yaale-wave-divider svg {
+    height: 88px;
+  }
+}
+
+/* ── 6. CATEGORIES AS ROUND ITSELF ────────────────────────────────────── */
+.yaale-category-arch {
+  border-radius: 9999px !important;
+  border: 2px solid var(--line, #E3DCD6);
+  overflow: hidden !important;
+  position: relative;
+  aspect-ratio: 1 / 1 !important;
+  transition: border-color 0.4s ease, transform 0.4s ease;
+}
+
+.yaale-category-arch:hover {
+  border-color: var(--copper, #BC7442);
+}
+
+.yaale-category-arch img {
+  border-radius: 9999px !important;
+  transform: scale(1.04);
+  transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+
+.yaale-category-arch:hover img,
+.yaale-category-arch:active img {
+  transform: scale(1.12);
+}
+
+/* ── 7. PRODUCT CARDS MOTION & PARALLAX ───────────────────────────────── */
+@media (min-width: 1024px) {
+  .yaale-stagger-card:nth-child(even) {
+    transform: translateY(22px);
+  }
+}
+
+.product-card-motion {
+  position: relative;
+  will-change: transform;
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (min-width: 1024px) {
+  .product-card-motion:hover {
+    transform: translateY(-8px) scale(1.015);
+    z-index: 5;
+  }
+}
+
+/* ── 8. ENDLESS MARQUEE STRIP ─────────────────────────────────────────── */
+.yaale-marquee-container {
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+  padding: 18px 0;
+  background-color: var(--bg-dark, #2B1C1A);
+  border-top: 1px solid var(--copper, #BC7442);
+  border-bottom: 1px solid var(--copper, #BC7442);
+  position: relative;
+  user-select: none;
+}
+
+.yaale-marquee-track {
+  display: inline-flex;
+  gap: 2rem;
+  will-change: transform;
+}
+
+.yaale-marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-family: 'Cormorant Infant', Georgia, serif;
+  font-size: 1.25rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-on-dark, #FBFAF7);
+}
+
+.yaale-marquee-item em {
+  color: var(--gold, #C9A227);
+  font-style: italic;
+}
+
+.yaale-marquee-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--gold, #C9A227);
+}
+
+/* ── 9. PINNED HORIZONTAL ROW (Desktop) & SWIPE (Mobile) ──────────────── */
+.yaale-featured-scroll-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+@media (min-width: 1024px) {
+  .yaale-pinned-track {
+    display: flex;
+    gap: 28px;
+    width: max-content;
+    will-change: transform;
+    padding-left: 2rem;
+    padding-right: 4rem;
+  }
+
+  .yaale-pinned-item {
+    width: 320px;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  .yaale-pinned-track {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 16px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .yaale-pinned-track::-webkit-scrollbar {
+    display: none;
+  }
+
+  .yaale-pinned-item {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+    width: 240px;
+  }
+}
+
+/* ── 10. DRAGGABLE CAROUSEL WITH MOMENTUM ─────────────────────────────── */
+.yaale-drag-carousel {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.yaale-drag-carousel.is-dragging {
+  cursor: grabbing !important;
+}
+
+/* ── 11. ROUND FLOATING ADD TO CART BUTTON ────────────────────────────── */
+.yaale-floating-badge {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--maroon, #7A0C32) !important;
+  color: var(--gold, #C9A227) !important;
+  border: 2px solid var(--copper, #BC7442);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  pointer-events: none;
+  box-shadow: 0 12px 30px rgba(43, 28, 26, 0.35);
+  z-index: 20;
+  will-change: transform;
+  transform: translate(-50%, -50%);
+}
+
+.yaale-floating-badge svg,
+.yaale-floating-badge span {
+  color: var(--gold, #C9A227) !important;
+}
+
+/* ── 12. BUTTON PRESS & MAGNETIC FEEDBACK ─────────────────────────────── */
+.btn-magnetic {
+  display: inline-block;
+  will-change: transform;
+  transition: transform 0.15s ease-out;
+}
+
+@media (max-width: 1023px) {
+  .btn-magnetic:active,
+  button:active {
+    transform: scale(0.95) !important;
+    transition: transform 0.1s ease !important;
+  }
+}
+
+/* ── 13. FULLSCREEN SECTIONS 100SVH ON MOBILE ─────────────────────────── */
+@media (max-width: 767px) {
+  .h-\[90vh\] {
+    height: 90svh !important;
+    min-height: 520px !important;
+  }
+
+  .h-\[70vh\] {
+    height: 70svh !important;
+    min-height: 420px !important;
+  }
+
+  button, a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ── 14. PREFERS-REDUCED-MOTION OVERRIDES ──────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  #yaale-preloader,
+  #yaale-scroll-progress,
+  .yaale-floating-badge {
+    display: none !important;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transform: none !important;
+  }
+
+  .word-reveal-inner {
+    transform: none !important;
+  }
+}
+
+/* ── 15. PRODUCT DETAIL PAGE LAYOUT ────────────────────────────────────── */
+
+/* Two-column grid */
+.pd-grid {
+  display: grid;
+  grid-template-columns: 55% 1fr;
+  gap: 48px;
+  align-items: start;
+  padding-bottom: 80px;
+}
+
+/* LEFT — sticky gallery column */
+.pd-gallery-col {
+  position: sticky;
+  top: 88px;           /* sits just below the navbar */
+  align-self: flex-start;
+}
+
+/* Main image */
+.pd-main-wrap {
+  aspect-ratio: 4 / 5;
+  border-radius: 20px;
+  overflow: hidden;
+  background-color: var(--bg-soft);
+}
+
+.pd-main-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.45s ease;
+}
+
+.pd-main-wrap:hover .pd-main-img {
+  transform: scale(1.04);
+}
+
+/* Thumbnail strip */
+.pd-thumbs {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pd-thumb-btn {
+  width: 68px;
+  height: 85px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: border-color 0.2s ease, opacity 0.2s ease;
+  opacity: 0.65;
+  background: var(--bg-soft);
+}
+
+.pd-thumb-btn:hover {
+  opacity: 1;
+}
+
+.pd-thumb-btn.pd-thumb-active {
+  border-color: var(--gold);
+  opacity: 1;
+}
+
+/* RIGHT — details column */
+.pd-detail-col {
+  padding-top: 8px;
+}
+
+/* Delivery / Payment info blocks */
+.pd-info-block {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+/* Accordion */
+.pd-accordions {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.yaale-accordion-item {
+  border-bottom: 1px solid var(--line);
+}
+
+.yaale-accordion-btn {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 0;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-main);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  min-height: 44px;
+}
+
+.yaale-accordion-btn:hover {
+  color: var(--gold);
+}
+
+.yaale-accordion-icon {
+  color: var(--gold);
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.yaale-accordion-icon.open {
+  transform: rotate(45deg);
+}
+
+.yaale-accordion-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1), padding 0.38s ease;
+  color: var(--text-muted);
+  line-height: 1.75;
+  font-size: 14px;
+  padding-bottom: 0;
+}
+
+.yaale-accordion-content.open {
+  max-height: 600px;
+  padding-bottom: 20px;
+}
+
+/* ── Responsive: tablet ──────────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  .pd-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding-bottom: 100px; /* room for mobile sticky bar */
+  }
+
+  .pd-gallery-col {
+    position: static; /* un-sticky on smaller screens */
+  }
+}
+
+/* ── Responsive: mobile ──────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .pd-grid {
+    gap: 20px;
+    padding: 0 0 120px;
+  }
+
+  .pd-main-wrap {
+    border-radius: 14px;
+  }
+
+  /* Sticky CTA bar pinned to bottom on mobile */
+  .pd-sticky-cta {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 16px;
+    background: var(--bg-main);
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 10px;
+    z-index: 100;
+    box-shadow: 0 -4px 20px rgba(43,28,26,0.08);
+  }
+
+  .pd-sticky-cta button {
+    flex: 1;
+    height: 50px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+}
+

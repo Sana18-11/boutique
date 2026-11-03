@@ -1,0 +1,6504 @@
+import { createContext, useContext, useState, useEffect, useRef, type FormEvent } from 'react'
+
+// ── Types ──────────────────────────────────────────────────────────────────
+type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard'
+type ShopCategoryFilter = 'ALL' | 'Soft Silk' | 'Cotton' | 'Semi Silk'
+
+const normalizeCategory = (category: string) => category.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+const CONTACT_ADDRESS = '10/2A, Thirumalai Gounder St, Palakarath Thottam, Salem, Ellampilai - 637502'
+const CONTACT_MAP_URL = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(CONTACT_ADDRESS)}`
+const INSTAGRAM_URL = 'https://www.instagram.com/yaale_sarees?stkn=dXVoZHI2dDhobmwy&utm_source=qr'
+const DEFAULT_CONTACT_EMAIL = 'hello@yaale.in'
+const DEFAULT_CONTACT_PHONE = '+91 98765 43210'
+
+const storeSettingsFromApi = (data: Record<string, unknown>): StoreSettingsForm => ({
+  store_name: String(data.store_name ?? ''),
+  store_email: String(data.store_email ?? ''),
+  store_phone: String(data.store_phone ?? ''),
+  store_address: String(data.store_address ?? ''),
+  shipping_fee: data.shipping_fee == null ? '' : String(data.shipping_fee),
+  free_shipping_threshold: data.free_shipping_threshold == null ? '' : String(data.free_shipping_threshold),
+  return_policy: String(data.return_policy ?? ''),
+  shipping_policy: String(data.shipping_policy ?? ''),
+  privacy_policy: String(data.privacy_policy ?? ''),
+  terms_policy: String(data.terms_policy ?? ''),
+})
+const productImageUrl = (image: unknown) => {
+  if (typeof image !== 'string' || !image.trim()) return ''
+
+  const path = image.trim()
+  if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:)/i.test(path)) return path
+
+  const storagePath = path.replace(/^\/+/, '').replace(/^storage\//i, '')
+  return storagePath ? `http://127.0.0.1:8000/storage/${storagePath}` : ''
+}
+
+const getProductMainImage = (p: Partial<Product> | null | undefined): string => {
+  if (!p) return '/yaale-logo-transparent.png'
+  if (p.image) {
+    const url = productImageUrl(p.image)
+    if (url) return url
+  }
+  if (Array.isArray(p.images) && p.images.length > 0) {
+    for (const img of p.images) {
+      const url = productImageUrl(typeof img === 'string' ? img : (img as any)?.image)
+      if (url) return url
+    }
+  }
+  return '/yaale-logo-transparent.png'
+}
+
+interface Product {
+  id: number
+  name: string
+  category: string
+  price: number
+  originalPrice?: number
+  discount?: number
+stock?: number
+  image: string
+  images?: string[]
+  video?: string
+  badge?: 'NEW' | 'SALE' | 'BESTSELLER'
+  fabric: string
+  color: string
+  sku: string
+  length?: string
+blouse?: string
+occasion?: string
+  inStock: boolean
+  description?: string
+  returnExchange?: string
+  manufacturedBy?: string
+  marketedBy?: string
+}
+
+interface CartItem extends Product { qty: number }
+
+interface EditorialVideo {
+  id: number
+  title: string
+  src: string
+  poster: string
+}
+
+interface AdminCategory {
+  id: number
+  name: string
+  description: string
+  is_active: boolean
+  products_count: number
+}
+
+interface AdminCustomer {
+  name: string
+  email: string | null
+  phone: string
+  orders: number
+  spend: number | string
+  joined_at: string | null
+  is_active: boolean | null
+}
+
+interface AdminAuthSession {
+  token: string
+  user: { id: number; name: string; email: string }
+}
+
+interface AdminDashboardStats {
+  total_sarees: { count: number; change: string }
+  total_orders: { count: number; change: string }
+  total_sales: { amount: number; formatted: string; change: string }
+  pending_orders: { count: number; urgent: number; change: string }
+  low_stock: { count: number; out_of_stock: number; change: string }
+  customers: { count: number; change: string }
+}
+
+interface CustomerAuthSession {
+  token: string
+  user: { id: number; name: string; email: string }
+}
+
+interface CustomerAddress {
+  id: number
+  user_id: number
+  name: string
+  phone: string
+  address_line: string
+  city: string
+  state: string
+  pin_code: string
+  landmark: string | null
+  is_default: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+interface CustomerOrderItem {
+  id: number
+  product_id: number
+  product_name: string
+  quantity: number
+  price: number | string
+  product?: Product | null
+}
+
+interface CustomerOrderStatusEvent {
+  id: number
+  status: string
+  note: string | null
+  created_at: string
+  changed_by: number | null
+}
+
+interface CustomerOrder {
+  id: number
+  order_number: string
+  customer_name: string
+  customer_phone: string
+  customer_address: string
+  total_amount: number | string
+  payment_status: string
+  status: string
+  created_at: string
+  expected_delivery_date?: string | null
+  items: CustomerOrderItem[]
+  status_history: CustomerOrderStatusEvent[]
+}
+
+interface StoreSettingsForm {
+  store_name: string
+  store_email: string
+  store_phone: string
+  store_address: string
+  shipping_fee: string
+  free_shipping_threshold: string
+  return_policy: string
+  shipping_policy: string
+  privacy_policy: string
+  terms_policy: string
+}
+
+const EMPTY_STORE_SETTINGS: StoreSettingsForm = {
+  store_name: '',
+  store_email: '',
+  store_phone: '',
+  store_address: '',
+  shipping_fee: '',
+  free_shipping_threshold: '',
+  return_policy: '',
+  shipping_policy: '',
+  privacy_policy: '',
+  terms_policy: '',
+}
+
+type OfferType = 'Discount' | 'Coupon' | 'Banner' | 'Promotion'
+type OfferStatus = 'Active' | 'Scheduled' | 'Paused'
+
+interface AdminOffer {
+  id: number
+  title: string
+  type: OfferType
+  value: string
+  description: string
+  status: OfferStatus
+}
+
+interface OfferForm {
+  title: string
+  type: OfferType
+  value: string
+  description: string
+  status: OfferStatus
+}
+
+// ── Data ───────────────────────────────────────────────────────────────────
+
+
+const HERO_IMAGES = [
+  'https://images.unsplash.com/photo-1771654104349-f6ec79a48205?w=1600&h=1000&fit=crop&auto=format',
+  'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1600&h=1000&fit=crop&auto=format',
+  'https://images.unsplash.com/photo-1618489335755-e3aa2b16cd7a?w=1600&h=1000&fit=crop&auto=format',
+  'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=1600&h=1000&fit=crop&auto=format',
+]
+
+interface ProductsStore {
+  products: Product[]
+  setProducts: React.Dispatch<React.SetStateAction<Product[]>>
+  productsLoading: boolean
+  productsError: string
+  refreshProducts: () => Promise<void>
+  videos: EditorialVideo[]
+  setVideos: React.Dispatch<React.SetStateAction<EditorialVideo[]>>
+  videosLoading: boolean
+  videosError: string
+  setVideosError: React.Dispatch<React.SetStateAction<string>>
+}
+
+const ProductsContext = createContext<ProductsStore | null>(null)
+const StoreSettingsContext = createContext<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
+
+function useProductsStore() {
+  const store = useContext(ProductsContext)
+  if (!store) throw new Error('useProductsStore must be used inside ProductsContext')
+  return store
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────
+function AnnouncementBar() {
+  return (
+    <div className="bg-charcoal text-champagne text-center py-2 text-xs tracking-[0.2em] font-light">
+      PAN INDIA DELIVERY &nbsp;•&nbsp; SECURE ONLINE PAYMENT &nbsp;•&nbsp; EXCLUSIVELY HANDCRAFTED
+    </div>
+  )
+}
+
+function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCustomerLogout }: {
+  page: Page
+  setPage: (p: Page) => void
+  cartCount: number
+  wishlistCount: number
+  customerSession: CustomerAuthSession | null
+  onCustomerLogout: () => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+
+  useEffect(() => {
+    const fn = () => setScrolled(window.scrollY > 40)
+    window.addEventListener('scroll', fn)
+    return () => window.removeEventListener('scroll', fn)
+  }, [])
+
+  const navLinks: { label: string; href: Page }[] = [
+    { label: 'Home', href: 'home' },
+    { label: 'Shop', href: 'shop' },
+    { label: 'About', href: 'about' },
+    { label: 'Contact', href: 'contact' },
+  ]
+
+  return (
+    <header className={`sticky top-0 z-50 transition-all duration-300 ${scrolled ? 'bg-ivory/95 backdrop-blur-md shadow-sm' : 'bg-ivory'} border-b border-border`}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+        {/* Logo */}
+        <button onClick={() => setPage('home')} className="flex items-center leading-none cursor-pointer" aria-label="Yaale home">
+          <img src="/yaale-logo-transparent.png" alt="Yaale, Soulful Weaves" className="h-[68px] w-[68px] object-contain" />
+        </button>
+
+        {/* Desktop Nav */}
+        <nav className="hidden md:flex items-center gap-8">
+          {navLinks.map(l => (
+            <button key={l.label} onClick={() => setPage(l.href)}
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 ${page === l.href ? 'text-gold' : 'text-charcoal hover:text-gold'}`}>
+              {l.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Icons */}
+        <div className="flex items-center gap-3">
+          <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative p-1 text-charcoal hover:text-gold transition-colors" aria-label="Wishlist">
+            <HeartIcon />
+            {wishlistCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-wine text-white text-[9px] rounded-full flex items-center justify-center">{wishlistCount}</span>}
+          </button>
+          <button onClick={() => setPage('cart')} className="relative p-1 text-charcoal hover:text-gold transition-colors" aria-label="Cart">
+            <BagIcon />
+            {cartCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-wine text-white text-[9px] rounded-full flex items-center justify-center">{cartCount}</span>}
+          </button>
+          <button onClick={() => setPage(customerSession ? 'account' : 'account-sign-in')} className="p-1 text-charcoal hover:text-gold transition-colors hidden md:block" aria-label="Account">
+            <UserIcon />
+          </button>
+          <button className="md:hidden flex h-9 w-9 items-center justify-center rounded-full bg-[#f0e9dd] text-charcoal transition-colors hover:bg-cream" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
+            <span className="flex flex-col items-center gap-1.5">
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Drawer */}
+      {menuOpen && (
+        <div className="md:hidden fixed inset-0 z-[60] bg-cream overflow-y-auto">
+          <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
+            <h2 className="font-serif text-4xl text-charcoal">Menu</h2>
+            <button onClick={() => setMenuOpen(false)} className="p-2 text-charcoal" aria-label="Close menu">
+              <XIcon />
+            </button>
+          </div>
+
+          <div className="px-5 py-4">
+            {[
+              { label: 'Home', href: 'home' },
+              { label: 'New Arrivals', href: 'shop' },
+              { label: 'Shop All', href: 'shop' },
+              { label: 'Festive Edits', href: 'shop' },
+              { label: 'Best Sellers', href: 'shop' },
+              { label: 'Sale', href: 'shop' },
+            ].map((item, index) => (
+              <button
+                key={item.label}
+                onClick={() => { setPage(item.href as Page); setMenuOpen(false) }}
+                className={`flex w-full items-center justify-between border-b border-border py-5 text-left text-[15px] tracking-[0.18em] uppercase text-charcoal ${index === 0 ? 'pt-4' : ''}`}
+              >
+                <span>{item.label}</span>
+                {index >= 2 && <span className="text-lg text-warm-gray">›</span>}
+              </button>
+            ))}
+
+            <div className="mt-8 space-y-5 border-t border-border pt-6">
+              {customerSession ? (
+                <>
+                  <button onClick={() => { setPage('account'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
+                    <span>My Account</span>
+                  </button>
+                  <button onClick={() => { onCustomerLogout(); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-wine">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-wine"><UserIcon /></span>
+                    <span>Sign Out</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => { setPage('account-sign-in'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
+                    <span>Sign In</span>
+                  </button>
+                  <button onClick={() => { setPage('account'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
+                    <span>Create an Account</span>
+                  </button>
+                </>
+              )}
+              <button onClick={() => { setPage(customerSession ? 'wishlist' : 'account-sign-in'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal">
+                  <HeartIcon size={16} />
+                </span>
+                <span>My Wish List</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  )
+}
+
+function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false }: {
+  p: Product, onAdd: (p: Product) => void, onWishlist: (id: number) => void, wishlist: number[], onClick: (p: Product) => void, shopCard?: boolean
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [popping, setPopping] = useState(false)
+  const [imgSrc, setImgSrc] = useState(() => getProductMainImage(p))
+  const cardRef = useRef<HTMLDivElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+
+  useEffect(() => {
+    setImgSrc(getProductMainImage(p))
+  }, [p.image, p.images])
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!shopCard || window.innerWidth < 768 || !cardRef.current) return
+    const rect = cardRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left - rect.width / 2
+    const y = e.clientY - rect.top - rect.height / 2
+    const tiltX = -(y / (rect.height / 2)) * 4
+    const tiltY = (x / (rect.width / 2)) * 4
+    cardRef.current.style.setProperty('--tilt-x', `${tiltX.toFixed(2)}deg`)
+    cardRef.current.style.setProperty('--tilt-y', `${tiltY.toFixed(2)}deg`)
+  }
+
+  const handleMouseLeave = () => {
+    setHovered(false)
+    if (cardRef.current) {
+      cardRef.current.style.setProperty('--tilt-x', '0deg')
+      cardRef.current.style.setProperty('--tilt-y', '0deg')
+      cardRef.current.style.transform = ''
+    }
+    if (imageRef.current) {
+      imageRef.current.style.transform = ''
+    }
+  }
+
+  const inWish = wishlist.includes(p.id)
+
+  return (
+    <div
+      ref={cardRef}
+      className={`group cursor-pointer product-card-motion transition-all duration-300 will-change-transform ${shopCard ? 'shop-product-card' : ''}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className={`relative overflow-hidden bg-[#f0e9dd] ${shopCard ? 'shop-product-frame rounded-[20px]' : 'rounded-3xl'}`} style={shopCard ? { aspectRatio: '3 / 4' } : { aspectRatio: '3 / 4' }} onClick={() => onClick(p)}>
+        <img ref={imageRef} src={imgSrc} alt={p.name} loading="lazy" onError={() => setImgSrc('/yaale-logo-transparent.png')}
+          className={`shop-product-image h-full w-full object-cover transition-transform duration-700 ease-out ${hovered ? 'scale-[1.06]' : 'scale-100'}`} />
+        <div className="absolute inset-0 bg-charcoal/0 group-hover:bg-charcoal/10 transition-colors duration-300 rounded-[20px]" />
+
+        {p.badge && (
+          <span className={`absolute left-3 top-[14px] text-[10px] tracking-[0.15em] uppercase px-2.5 py-1 rounded-full font-medium ${
+            p.badge === 'SALE' ? 'bg-wine text-white' :
+            p.badge === 'BESTSELLER' ? 'bg-charcoal text-champagne' :
+            'bg-champagne text-charcoal'}`}>{p.badge}</span>
+        )}
+
+        <button
+          type="button"
+          className={`wishlist-btn absolute grid place-items-center ${shopCard ? 'top-[14px] right-[14px] h-10 w-10 border-0 bg-transparent shadow-none' : 'top-3 right-3 h-8 w-8 rounded-full border border-transparent bg-white/80 text-warm-gray hover:bg-white hover:text-wine'} transition-transform duration-200 ${inWish ? 'is-active text-wine' : 'text-white'} hover:scale-[1.15]`}
+          data-product-id={String(p.id)}
+          data-active={String(inWish)}
+          onClick={e => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (shopCard) {
+              setPopping(true)
+              window.setTimeout(() => setPopping(false), 180)
+            }
+            onWishlist(p.id)
+          }}
+          style={shopCard ? { filter: 'drop-shadow(0 1px 3px rgba(0,0,0,.45))', ['--heart-scale' as any]: popping ? '1.3' : '1' } : undefined}
+          aria-label={inWish ? 'Remove from wishlist' : 'Add to wishlist'}
+        >
+          <HeartIcon filled={inWish} size={shopCard ? 24 : 14} />
+        </button>
+
+        {p.inStock && (
+          <div className={`absolute inset-x-0 bottom-0 p-3 transition-all duration-300 ${hovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
+            <button onClick={e => { e.stopPropagation(); onAdd(p) }}
+              className="w-full bg-charcoal/90 backdrop-blur-sm text-champagne text-xs tracking-widest uppercase py-2.5 rounded-2xl hover:bg-charcoal transition-colors">
+              Add to Bag
+            </button>
+          </div>
+        )}
+        {!p.inStock && (
+          <div className="absolute inset-x-3 bottom-3">
+            <div className="w-full bg-warm-gray/70 backdrop-blur-sm text-white text-xs tracking-widest uppercase py-2.5 rounded-2xl text-center">
+              Out of Stock
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 px-1" onClick={() => onClick(p)}>
+        <p className="text-xs text-gold tracking-widest uppercase">
+          {p.category}
+        </p>
+
+        <h3 className={`font-serif mt-0.5 leading-tight ${shopCard ? 'text-[1.0625rem]' : 'text-base'} text-charcoal`}>
+          <span className={shopCard ? 'inline-block pb-[2px] relative after:absolute after:bottom-0 after:left-0 after:h-[1.5px] after:w-full after:origin-left after:scale-x-0 after:bg-[#C9A227] after:transition-transform after:duration-300 group-hover:after:scale-x-100' : ''}>{p.name}</span>
+        </h3>
+
+        <div className="mt-1 flex items-center gap-2">
+          {p.originalPrice && p.originalPrice > p.price ? (
+            <>
+              <span className="text-xs text-warm-gray line-through">
+                ₹{p.originalPrice.toLocaleString('en-IN')}
+              </span>
+
+              <span className="text-sm font-medium text-charcoal">
+                ₹{p.price.toLocaleString('en-IN')}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm font-medium text-charcoal">
+              ₹{p.price.toLocaleString('en-IN')}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ── Pages ──────────────────────────────────────────────────────────────────
+ function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, onCategorySelect }: { setPage: (p: Page) => void, setSelectedProduct: (p: Product) => void, onAdd: (p: Product) => void, onWishlist: (id: number) => void, wishlist: number[], onCategorySelect: (category: Exclude<ShopCategoryFilter, 'ALL'>) => void }) {
+  const { products, videos, videosLoading, videosError } = useProductsStore()
+  const videoRailRef = useRef<HTMLDivElement>(null)
+  const homeRowRef = useRef<HTMLDivElement>(null)
+  const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
+  const scrollFrameRef = useRef<number | null>(null)
+  const [activeVideo, setActiveVideo] = useState(0)
+  const [heroImage, setHeroImage] = useState(0)
+
+   useEffect(() => {
+     const timer = window.setInterval(() => setHeroImage(current => (current + 1) % HERO_IMAGES.length), 2000)
+     return () => window.clearInterval(timer)
+   }, [])
+
+   const bestSellers = products.filter(p => p.badge === 'BESTSELLER' || p.id <= 4).slice(0, 4)
+   const [reducedMotion, setReducedMotion] = useState(false)
+   const [homeMarqueePaused, setHomeMarqueePaused] = useState(false)
+   const [homeMarqueeReady, setHomeMarqueeReady] = useState(false)
+   const homeSectionRef = useRef<HTMLElement | null>(null)
+
+   useEffect(() => {
+     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+     const updateMotionPreference = () => setReducedMotion(media.matches)
+     updateMotionPreference()
+     media.addEventListener?.('change', updateMotionPreference)
+     return () => media.removeEventListener?.('change', updateMotionPreference)
+   }, [])
+
+   useEffect(() => {
+     const markReady = () => setHomeMarqueeReady(true)
+     if (document.readyState === 'complete') {
+       markReady()
+       return
+     }
+     window.addEventListener('load', markReady)
+     return () => window.removeEventListener('load', markReady)
+   }, [])
+
+   useEffect(() => {
+     if (!homeSectionRef.current || reducedMotion) return
+
+     const section = homeSectionRef.current
+     const observer = new IntersectionObserver((entries) => {
+       const isVisible = entries.some(entry => entry.isIntersecting)
+       setHomeMarqueePaused(!isVisible)
+     }, { threshold: 0.2 })
+
+     observer.observe(section)
+     return () => observer.disconnect()
+   }, [reducedMotion])
+
+   useEffect(() => {
+     const row = homeRowRef.current
+     if (!row || reducedMotion || !homeMarqueeReady || bestSellers.length === 0) return
+
+     const cards = row.querySelectorAll<HTMLElement>('.home-best-seller-card')
+     if (!cards.length || !window.gsap) return
+
+     const media = window.gsap.matchMedia()
+     media.add('(min-width: 768px)', () => {
+       window.gsap.fromTo(cards, { autoAlpha: 0, x: 60 }, { autoAlpha: 1, x: 0, duration: 0.55, ease: 'power3.out', stagger: 0.08 })
+     })
+     media.add('(max-width: 767px)', () => {
+       window.gsap.fromTo(cards, { autoAlpha: 0, x: 24 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 })
+     })
+
+     return () => media.revert()
+   }, [bestSellers.length, reducedMotion, homeMarqueeReady])
+
+   const homeMarqueeProducts = reducedMotion ? bestSellers : [...bestSellers, ...bestSellers]
+
+   const goToVideo = (index: number) => {
+    if (!videos.length) return
+    const nextIndex = (index + videos.length) % videos.length
+    const rail = videoRailRef.current
+    const card = rail?.children[nextIndex] as HTMLElement | undefined
+    if (rail && card) {
+      rail.scrollTo({
+        left: card.offsetLeft - (rail.clientWidth - card.offsetWidth) / 2,
+        behavior: 'smooth',
+      })
+    }
+    setActiveVideo(nextIndex)
+  }
+
+   useEffect(() => {
+     if (!videos.length) return
+
+     Object.entries(videoRefs.current).forEach(([index, video]) => {
+       if (!video) return
+       const numericIndex = Number(index)
+       const shouldPlay = numericIndex === activeVideo
+
+       if (shouldPlay) {
+         video.muted = true
+         video.loop = true
+         video.playsInline = true
+         void video.play().catch(() => {})
+       } else {
+         video.pause()
+         video.currentTime = 0
+       }
+     })
+   }, [activeVideo, videos])
+
+   return (
+    <div>
+      {/* Hero */}
+      <section className="relative h-[90vh] min-h-[600px] overflow-hidden bg-charcoal">
+        {HERO_IMAGES.map((image, index) => (
+          <img key={image} src={image} alt="Elegant saree editorial" className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroImage ? 'opacity-70' : 'opacity-0'}`} />
+        ))}
+        <div className="absolute inset-0 bg-gradient-to-r from-charcoal/80 via-charcoal/30 to-transparent" />
+        <div className="relative h-full flex flex-col justify-center max-w-7xl mx-auto px-6 sm:px-10">
+          <div className="max-w-2xl">
+            <h1 className="font-serif text-5xl sm:text-6xl lg:text-7xl text-white leading-[1.1] mb-6">
+              Timeless Drapes.<br /><em className="text-champagne not-italic">Effortless Elegance.</em>
+            </h1>
+            <p className="text-white/70 text-base sm:text-lg font-light leading-relaxed mb-10 max-w-lg">
+              Discover our curated collection of sarees, woven for moments that matter.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              <button onClick={() => setPage('shop')}
+                className="bg-champagne text-charcoal px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-medium hover:bg-charcoal hover:text-champagne transition-colors duration-300">
+                Shop Collection
+              </button>
+              <button onClick={() => setPage('shop')}
+                className="border border-white/50 text-white px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-light hover:border-champagne hover:text-champagne transition-colors duration-300">
+                Explore Sarees
+              </button>
+            </div>
+          </div>
+        </div>
+        {/* Scroll hint */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-white/40">
+          <span className="text-[9px] tracking-[0.3em] uppercase">Scroll</span>
+          <div className="w-px h-10 bg-gradient-to-b from-white/40 to-transparent" />
+        </div>
+      </section>
+
+      {/* Category Cards */}
+      <section className="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="text-center mb-14">
+          <p className="text-gold text-xs tracking-[0.35em] uppercase mb-3">Collections</p>
+          <h2 className="font-serif text-4xl sm:text-5xl text-charcoal">Shop by Category</h2>
+        </div>
+        <div className="flex gap-3 overflow-x-auto px-1 pb-4 snap-x snap-mandatory sm:gap-6 md:grid md:grid-cols-3 md:overflow-visible md:px-0 md:pb-0">
+          {[
+            { title: 'Soft Silk Sarees', desc: 'Elegant traditional silk, woven for royalty.', img: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format', cat: 'Soft Silk' },
+            { title: 'Cotton Sarees', desc: 'Light, breathable, and timelessly graceful.', img: '/brown-cotton-saree.webp', cat: 'Cotton' },
+            { title: 'Semi Silk Sarees', desc: 'A refined blend of tradition and modernity.', img: '/semi-silk-saree.webp', cat: 'Semi Silk' },
+          ].map(c => (
+            <div key={c.cat} className="group relative w-[172px] flex-shrink-0 snap-start cursor-pointer sm:w-[230px] md:w-auto md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
+              <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full">
+                <img src={c.img} alt={c.title} style={{ objectPosition: 'center 20%' }} className="absolute inset-0 h-full w-full object-cover object-center scale-[1.05] group-hover:scale-[1.08] transition-transform duration-700" />
+                <div className="absolute inset-0 rounded-full bg-gradient-to-t from-charcoal/90 via-charcoal/15 to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 p-3 text-center sm:p-5 md:p-7">
+                  <h3 className="font-serif text-lg text-white sm:text-2xl">{c.title}</h3>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* New Arrivals */}
+      <section className="py-16 bg-cream">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="mb-12 flex flex-col items-center justify-between gap-5 sm:flex-row sm:items-end">
+            <div className="text-center sm:text-left">
+              <p className="text-gold text-xs tracking-[0.35em] uppercase mb-3">Just In</p>
+              <h2 className="font-serif text-4xl sm:text-5xl text-charcoal mb-3">New Arrivals</h2>
+              <p className="text-warm-gray font-light">Discover the latest additions to our curated collection.</p>
+            </div>
+            <button onClick={() => setPage('shop')}
+              className="text-xs tracking-widest uppercase text-gold border-b border-gold/40 pb-0.5 hover:border-[#4a3a32] transition-colors">
+              View All Sarees
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            {products.slice(0, 8).map(p => (
+              <ProductCard key={p.id} p={p} onAdd={onAdd} onWishlist={onWishlist} wishlist={wishlist} onClick={() => {
+  setSelectedProduct(p)
+  setPage('product')
+}} />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Editorial video stories */}
+      <section className="bg-ivory py-12 sm:py-16">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mb-7 flex items-end justify-between gap-4 sm:mb-10">
+            <div>
+              <p className="text-gold text-xs tracking-[0.35em] uppercase mb-2">From the studio</p>
+              <h2 className="font-serif text-3xl sm:text-5xl text-charcoal">Festive Edit</h2>
+            </div>
+            <span className="hidden text-xs tracking-widest uppercase text-warm-gray sm:block">Swipe to explore</span>
+          </div>
+          <div ref={videoRailRef} onScroll={event => {
+            if (scrollFrameRef.current !== null) return
+            scrollFrameRef.current = window.requestAnimationFrame(() => {
+              scrollFrameRef.current = null
+              const rail = videoRailRef.current
+              if (!rail || !rail.children.length) return
+              const center = rail.scrollLeft + rail.clientWidth / 2
+              const closest = Array.from(rail.children).reduce((best, _, index) => {
+                const card = rail.children[index] as HTMLElement
+                const bestCard = rail.children[best] as HTMLElement
+                return Math.abs(card.offsetLeft + card.offsetWidth / 2 - center) < Math.abs(bestCard.offsetLeft + bestCard.offsetWidth / 2 - center) ? index : best
+              }, 0)
+              setActiveVideo(current => current === closest ? current : closest)
+            })
+          }} className="flex touch-pan-x snap-x snap-mandatory gap-4 overflow-x-auto overscroll-x-contain scroll-smooth px-[16vw] py-8 sm:gap-6 sm:px-[calc(50%-130px)] sm:scroll-px-[calc(50%-130px)] md:px-[calc(50%-145px)] md:scroll-px-[calc(50%-145px)]">
+            {videosLoading ? (
+              <p className="py-8 text-sm text-warm-gray">Loading videos...</p>
+            ) : videosError ? (
+              <p className="py-8 text-sm text-warm-gray">{videosError}</p>
+            ) : videos.length === 0 ? (
+              <p className="py-8 text-sm text-warm-gray">No videos available.</p>
+            ) : videos.map((video, index) => (
+              <article key={video.id} className={`relative flex-shrink-0 snap-center overflow-hidden rounded-[4px] bg-charcoal aspect-[9/14] w-[72vw] transition-[transform,opacity,box-shadow] duration-300 ease-out sm:w-[270px] md:w-[300px] ${index === activeVideo ? 'scale-100 opacity-100 shadow-[0_22px_45px_rgba(44,35,32,0.2)]' : 'scale-[0.88] opacity-80 shadow-[0_12px_26px_rgba(44,35,32,0.12)]'}`}>
+                <video
+                  ref={(element) => {
+                    videoRefs.current[index] = element
+                  }}
+                  src={video.src}
+                  poster={video.poster}
+                  muted
+                  loop
+                  autoPlay
+                  preload="auto"
+                  playsInline
+                  className="h-full w-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-charcoal/75 via-transparent to-transparent" />
+                <h3 className="absolute inset-x-5 bottom-5 font-serif text-2xl text-white">{video.title}</h3>
+              </article>
+            ))}
+          </div>
+          {videos.length > 0 && !videosLoading && !videosError && (
+            <div className="relative mt-1 flex items-center justify-center gap-4">
+              <button onClick={() => goToVideo(activeVideo - 1)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-charcoal shadow-sm" aria-label="Previous video">&#8592;</button>
+              <div className="flex items-center gap-1.5">
+                {videos.map((video, index) => <button key={video.id} onClick={() => goToVideo(index)} className={`h-11 w-2 rounded-full transition-all sm:h-2 sm:w-2 sm:rounded-full ${index === activeVideo ? 'bg-charcoal' : 'bg-[#cfc5bd]'}`} aria-label={`Go to video ${index + 1}`} />)}
+              </div>
+              <button onClick={() => goToVideo(activeVideo + 1)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-charcoal shadow-sm" aria-label="Next video">&#8594;</button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Featured Banner */}
+      <section className="relative h-[70vh] min-h-[480px] overflow-hidden my-20 mx-4 sm:mx-8 lg:mx-16 rounded-3xl bg-charcoal">
+        <img src="https://images.unsplash.com/photo-1618489335755-e3aa2b16cd7a?w=1600&h=900&fit=crop&auto=format"
+          alt="Featured collection" className="absolute inset-0 w-full h-full object-cover opacity-60" />
+        <div className="absolute inset-0 bg-gradient-to-l from-charcoal/80 via-charcoal/30 to-transparent" />
+        <div className="relative h-full flex flex-col justify-center items-end max-w-7xl mx-auto px-8 sm:px-16 text-right">
+          <p className="text-champagne text-xs tracking-[0.4em] uppercase mb-4 font-light">Featured Collection</p>
+          <h2 className="font-serif text-4xl sm:text-5xl lg:text-6xl text-white leading-tight mb-6 max-w-xl">
+            Crafted for <em className="text-champagne not-italic">Celebrations</em>
+          </h2>
+          <p className="text-white/60 font-light mb-8 max-w-sm">Bridal silks and festive weaves for every cherished occasion.</p>
+          <button onClick={() => setPage('shop')}
+            className="border border-champagne text-champagne px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase hover:bg-[#b8966a] hover:text-charcoal transition-all duration-300">
+            Explore the Collection
+          </button>
+        </div>
+      </section>
+
+      {/* Best Sellers */}
+      <section ref={homeSectionRef} className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="flex items-end justify-between mb-12">
+          <div>
+            <p className="text-gold text-xs tracking-[0.35em] uppercase mb-3">Most Loved</p>
+            <h2 className="font-serif text-4xl sm:text-5xl text-charcoal">Best Sellers</h2>
+          </div>
+          <button onClick={() => setPage('shop')}
+            className="text-xs tracking-widest uppercase text-gold border-b border-gold/40 pb-0.5 hover:border-[#4a3a32] transition-colors hidden sm:block">
+            View All
+          </button>
+        </div>
+
+        {reducedMotion ? (
+          <div ref={homeRowRef} className="home-best-sellers-row flex gap-5 overflow-x-auto pb-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', scrollSnapType: 'x mandatory', touchAction: 'pan-y' }}>
+            {bestSellers.map(p => (
+              <div key={p.id} className="home-best-seller-card flex-shrink-0" style={{ width: 'clamp(260px, 28vw, 320px)', flex: '0 0 auto', scrollSnapAlign: 'start' }}>
+                <ProductCard p={p} onAdd={onAdd} onWishlist={onWishlist} wishlist={wishlist} onClick={() => setPage('product')} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div
+            ref={homeRowRef}
+            className={`home-products-marquee ${homeMarqueePaused ? 'is-paused' : ''}`}
+            onMouseEnter={() => setHomeMarqueePaused(true)}
+            onMouseLeave={() => setHomeMarqueePaused(false)}
+            onTouchStart={() => setHomeMarqueePaused(true)}
+            onTouchEnd={() => setHomeMarqueePaused(false)}
+            aria-label="Best sellers product marquee"
+          >
+            <div className="home-products-marquee-track" role="list" aria-live="polite">
+              {homeMarqueeProducts.map((p, index) => (
+                <div
+                  key={`${p.id}-${index}`}
+                  className="home-best-seller-card"
+                  aria-hidden={index >= bestSellers.length}
+                  tabIndex={index >= bestSellers.length ? -1 : 0}
+                >
+                  <ProductCard p={p} onAdd={onAdd} onWishlist={onWishlist} wishlist={wishlist} onClick={() => setPage('product')} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Testimonials / Brand strip */}
+      <section className="bg-charcoal py-16 px-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-10 text-center">
+            {[
+              { label: '2000+', sub: 'Handpicked Sarees' },
+              { label: '15,000+', sub: 'Happy Customers' },
+              { label: 'Pan India', sub: 'Delivery' },
+            ].map(s => (
+              <div key={s.label}>
+                <p className="font-serif text-4xl text-champagne mb-2">{s.label}</p>
+                <p className="text-white/50 text-xs tracking-widest uppercase font-light">{s.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, filter, setFilter }: { setPage: (p: Page) => void, setSelectedProduct: (p: Product) => void, onAdd: (p: Product) => void, onWishlist: (id: number) => void, wishlist: number[], filter: ShopCategoryFilter, setFilter: React.Dispatch<React.SetStateAction<ShopCategoryFilter>> }) {
+  const { products } = useProductsStore()
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [priceRange, setPriceRange] = useState('All Prices')
+  const [sort, setSort] = useState('Newest')
+
+  const filtered = (filter === 'ALL' ? products : products.filter(p => normalizeCategory(p.category) === normalizeCategory(filter)))
+    .filter(p => priceRange === 'All Prices' ||
+      (priceRange === 'Under ₹5,000' && p.price < 5000) ||
+      (priceRange === '₹5,000 - ₹10,000' && p.price >= 5000 && p.price <= 10000) ||
+      (priceRange === 'Above ₹10,000' && p.price > 10000))
+    .slice()
+    .sort((a, b) => sort === 'Price: Low to High' ? a.price - b.price : sort === 'Price: High to Low' ? b.price - a.price : 0)
+
+  useEffect(() => {
+    const cards = document.querySelectorAll<HTMLElement>('.shop-product-card')
+    if (!cards.length || !(window as any).gsap) return
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const media = (window as any).gsap.matchMedia()
+
+    if (reducedMotion) {
+      ;(window as any).gsap.set(cards, { autoAlpha: 1, x: 0 })
+      return () => media.revert()
+    }
+
+    media.add('(min-width: 768px)', () => {
+      ;(window as any).gsap.fromTo(cards, { autoAlpha: 0, x: 60 }, { autoAlpha: 1, x: 0, duration: 0.55, ease: 'power3.out', stagger: 0.08 })
+    })
+
+    media.add('(max-width: 767px)', () => {
+      ;(window as any).gsap.fromTo(cards, { autoAlpha: 0, x: 24 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 })
+    })
+
+    return () => media.revert()
+  }, [filtered.length])
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="bg-cream py-14 px-6 text-center">
+        <p className="text-warm-gray text-xs tracking-widest uppercase mb-3">
+          <button onClick={() => setPage('home')} className="hover:text-gold">Home</button>
+          <span className="mx-2">/</span>Sarees
+        </p>
+        <h1 className="font-serif text-5xl text-charcoal">Sarees</h1>
+        <p className="text-warm-gray font-light mt-3 max-w-md mx-auto">Curated drapes for every woman, every occasion.</p>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div className="relative flex flex-wrap items-center justify-between gap-4 mb-10">
+          <div className="relative">
+            <button onClick={() => setFilterOpen(open => !open)} aria-expanded={filterOpen} aria-label="Open saree filters"
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-cream px-4 py-2 text-xs tracking-widest uppercase text-charcoal transition-colors hover:bg-cream">
+              <FilterIcon />
+              Filter
+              {(filter !== 'ALL' || priceRange !== 'All Prices') && <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-wine px-1 text-[9px] text-white">{Number(filter !== 'ALL') + Number(priceRange !== 'All Prices')}</span>}
+            </button>
+
+            {filterOpen && (
+              <div className="absolute left-0 top-12 z-20 w-[min(300px,calc(100vw-2rem))] rounded-2xl border border-border bg-white p-5 shadow-[0_18px_45px_rgba(44,35,32,0.12)]">
+                <div className="mb-5">
+                  <p className="mb-2 text-[10px] tracking-[0.2em] uppercase text-warm-gray">Category</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['ALL', 'Soft Silk', 'Cotton', 'Semi Silk'] as const).map(category => (
+                      <button key={category} onClick={() => setFilter(category)}
+                        className={`rounded-xl px-3 py-2 text-left text-xs transition-colors ${filter === category ? 'bg-charcoal text-champagne' : 'bg-cream text-warm-gray hover:bg-cream'}`}>
+                        {category === 'ALL' ? 'All Sarees' : category}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-2 text-[10px] tracking-[0.2em] uppercase text-warm-gray">Price</p>
+                  <select value={priceRange} onChange={event => setPriceRange(event.target.value)} className="w-full rounded-xl border border-border bg-cream px-3 py-2 text-xs text-charcoal outline-none">
+                    <option>All Prices</option>
+                    <option>Under ₹5,000</option>
+                    <option>₹5,000 - ₹10,000</option>
+                    <option>Above ₹10,000</option>
+                  </select>
+                </div>
+                <div className="mt-5 flex items-center justify-between border-t border-border pt-4">
+                  <button onClick={() => { setFilter('ALL'); setPriceRange('All Prices') }} className="text-xs uppercase tracking-wider text-warm-gray hover:text-charcoal">Clear</button>
+                  <button onClick={() => setFilterOpen(false)} className="rounded-full bg-charcoal px-4 py-2 text-xs uppercase tracking-wider text-champagne">Apply</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <select value={sort} onChange={e => setSort(e.target.value)}
+            className="text-xs tracking-wider bg-cream border border-border rounded-full px-4 py-2 text-charcoal outline-none cursor-pointer">
+            <option>Newest</option>
+            <option>Price: Low to High</option>
+            <option>Price: High to Low</option>
+            <option>Best Selling</option>
+          </select>
+        </div>
+
+        <div className="mb-4 flex items-center justify-end gap-3 md:hidden" />
+
+        <div className="relative">
+          {filtered.length === 0 ? (
+            <p className="py-10 text-center text-sm text-warm-gray">
+              {filter === 'ALL' ? 'No sarees found.' : `No sarees found in ${filter}.`}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4">
+              {filtered.map(p => (
+                <div key={p.id} className="shop-product-card w-full">
+                  <ProductCard
+                    p={p}
+                    onAdd={onAdd}
+                    onWishlist={onWishlist}
+                    wishlist={wishlist}
+                    shopCard={true}
+                    onClick={() => {
+                      setSelectedProduct(p)
+                      setPage('product')
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function ProductPage({ setPage, product, onAdd, onWishlist, wishlist }: {
+  setPage: (p: Page) => void
+  product: Product | null
+  onAdd: (p: Product) => void
+  onWishlist: (id: number) => void
+  wishlist: number[]
+}) {
+  const { products } = useProductsStore()
+  const p = product ?? products[0]
+  const [qty, setQty] = useState(1)
+  const [addedToBag, setAddedToBag] = useState(false)
+  const [heartPop, setHeartPop] = useState(false)
+  const [pincode, setPincode] = useState('')
+  const [delivery, setDelivery] = useState<string | null>(null)
+  const [openSection, setOpenSection] = useState<string | null>('Product Description')
+  const inWish = wishlist.includes(p.id)
+
+  // Build deduplicated image list; exclude logo placeholder from thumbnails
+  const mainImg = getProductMainImage(p)
+  const [selectedImage, setSelectedImage] = useState(mainImg)
+
+  const rawImages: string[] = []
+  if (p.image) {
+    const u = productImageUrl(p.image)
+    if (u) rawImages.push(u)
+  }
+  if (Array.isArray(p.images)) {
+    for (const img of p.images) {
+      const u = productImageUrl(typeof img === 'string' ? img : (img as any)?.image)
+      if (u && !rawImages.includes(u)) rawImages.push(u)
+    }
+  }
+  const allImages = rawImages.filter(u => !u.includes('yaale-logo'))
+
+  const checkDelivery = () => {
+    if (pincode.length === 6) setDelivery(`Estimated delivery: ${new Date(Date.now() + 5 * 864e5).toDateString()}`)
+    else setDelivery('Please enter a valid 6-digit pincode.')
+  }
+
+  const sections = [
+    { title: 'Product Description', content: p.description || 'This exquisite Kanjivaram Zari Silk saree is woven by master artisans in Tamil Nadu. The rich zari borders and intricate motifs make it ideal for weddings and festive occasions.' },
+    { title: 'Fabric & Care', content: 'Pure Kanjivaram Silk. Dry clean only. Store in a muslin cloth. Keep away from direct sunlight and moisture.' },
+    { title: 'Shipping Information', content: 'We deliver across India in 5-7 working days. Express delivery available in select cities. Tracking updates sent via WhatsApp and Email.' },
+    { title: 'Return & Exchange', content: p.returnExchange || 'All sales are final. We do not accept returns or exchanges. Please review product details carefully before purchase.' },
+    { title: 'Manufactured & Marketed By', content: `Manufactured by: ${p.manufacturedBy || 'Yaale Artisans'}\nMarketed by: ${p.marketedBy || 'Yaale'}` },
+    { title: 'Contact Us', content: 'Have a question about this saree, delivery, or styling? Our boutique team is happy to help.' },
+  ]
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-main)' }}>
+      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '40px 24px 0' }}>
+
+        {/* Breadcrumb */}
+        <p className="text-warm-gray text-xs tracking-widest uppercase mb-8">
+          <button onClick={() => setPage('home')} className="hover:text-gold transition-colors">Home</button>
+          <span className="mx-2">/</span>
+          <button onClick={() => setPage('shop')} className="hover:text-gold transition-colors">Sarees</button>
+          <span className="mx-2">/</span>{p.name}
+        </p>
+
+        {/* Two-column layout */}
+        <div className="pd-grid">
+
+          {/* LEFT: Sticky Gallery */}
+          <div className="pd-gallery-col">
+            <div className="pd-main-wrap">
+              <img
+                src={selectedImage || mainImg}
+                alt={p.name}
+                className="pd-main-img"
+                onError={(e) => { (e.target as HTMLImageElement).src = '/yaale-logo-transparent.png' }}
+              />
+            </div>
+
+            {allImages.length > 1 && (
+              <div className="pd-thumbs">
+                {allImages.map((img, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setSelectedImage(img)}
+                    className={`pd-thumb-btn${selectedImage === img ? ' pd-thumb-active' : ''}`}
+                  >
+                    <img
+                      src={img}
+                      alt={`${p.name} view ${i + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none' }}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: Details */}
+          <div className="pd-detail-col">
+
+            <span className="text-xs tracking-widest uppercase" style={{ color: 'var(--gold)' }}>{p.category}</span>
+            <h1 className="font-serif text-3xl sm:text-4xl mt-2 mb-1" style={{ color: 'var(--text-main)' }}>{p.name}</h1>
+            <p className="text-xs tracking-wider mb-5" style={{ color: 'var(--text-muted)' }}>SKU: {p.sku}</p>
+
+            {/* Price */}
+            <div className="flex items-center gap-3 mb-6">
+              <span className="text-2xl font-semibold" style={{ color: 'var(--maroon)' }}>&#8377;{p.price.toLocaleString('en-IN')}</span>
+              {p.originalPrice && <>
+                <span className="text-base line-through" style={{ color: 'var(--text-muted)' }}>&#8377;{p.originalPrice.toLocaleString('en-IN')}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: 'var(--red)' }}>
+                  {Math.round((1 - p.price / p.originalPrice!) * 100)}% OFF
+                </span>
+              </>}
+            </div>
+
+            {/* Specs */}
+            <div className="rounded-2xl p-5 mb-6 grid grid-cols-2 gap-4 text-sm" style={{ backgroundColor: 'var(--bg-soft)' }}>
+              {[
+                ['Fabric', p.fabric],
+                ['Color', p.color],
+                ['Length', p.length || 'Not specified'],
+                ['Blouse', p.blouse || 'Not specified'],
+                ['Occasion', p.occasion || 'Not specified'],
+                ['Availability', p.inStock ? 'In Stock' : 'Out of Stock'],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <p className="text-xs tracking-wider uppercase mb-0.5" style={{ color: 'var(--text-muted)' }}>{k}</p>
+                  <p className="font-medium" style={{ color: 'var(--text-main)' }}>{v}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Qty + Heart */}
+            <div className="flex items-center gap-4 mb-5">
+              <div className="flex items-center rounded-full overflow-hidden" style={{ border: '1px solid var(--line)' }}>
+                <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>&#8722;</button>
+                <span className="px-3 text-sm font-medium" style={{ color: 'var(--text-main)' }}>{qty}</span>
+                <button onClick={() => setQty(q => q + 1)} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>+</button>
+              </div>
+              {/* Heart icon — no circle */}
+              <button
+                type="button"
+                className="wishlist-btn"
+                data-product-id={String(p.id)}
+                data-active={String(inWish)}
+                onClick={e => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setHeartPop(true)
+                  setTimeout(() => setHeartPop(false), 350)
+                  onWishlist(p.id)
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '4px',
+                  cursor: 'pointer',
+                  transform: heartPop ? 'scale(1.35)' : 'scale(1)',
+                  transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                }}
+                aria-label={inWish ? 'Remove from wishlist' : 'Add to wishlist'}
+              >
+                <svg width="26" height="26" viewBox="0 0 24 24"
+                  fill={inWish ? '#7A0C32' : 'none'}
+                  stroke="#7A0C32"
+                  strokeWidth="1.8"
+                >
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* CTA Buttons */}
+            <div className="flex gap-3 mb-6">
+              <button
+                onClick={() => { onAdd(p); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
+                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors"
+                style={{ height: '52px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
+              >
+                {addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
+              </button>
+              <button
+                onClick={() => { onAdd(p); setPage('checkout') }}
+                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors"
+                style={{ height: '52px', backgroundColor: 'var(--maroon)', color: 'var(--text-on-dark)' }}
+              >
+                Buy Now
+              </button>
+            </div>
+
+            {/* Check Delivery */}
+            <div className="pd-info-block mb-4">
+              <p className="text-xs tracking-widest uppercase mb-3" style={{ color: 'var(--text-muted)' }}>Check Delivery</p>
+              <div className="flex gap-2">
+                <input
+                  value={pincode}
+                  onChange={e => setPincode(e.target.value.replace(/\D/, '').slice(0, 6))}
+                  placeholder="Enter 6-digit pincode"
+                  className="flex-1 rounded-full px-4 py-2 text-sm outline-none bg-transparent"
+                  style={{ border: '1px solid var(--line)', color: 'var(--text-main)' }}
+                />
+                <button
+                  onClick={checkDelivery}
+                  className="px-5 py-2 rounded-full text-xs tracking-wider transition-colors"
+                  style={{ backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
+                >
+                  Check
+                </button>
+              </div>
+              {delivery && <p className="text-xs mt-2 font-medium" style={{ color: 'var(--maroon)' }}>{delivery}</p>}
+            </div>
+
+            {/* Secure Payment */}
+            <div className="pd-info-block mb-6">
+              <p className="text-xs tracking-widest uppercase mb-3" style={{ color: 'var(--text-muted)' }}>Secure Payment</p>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {['UPI', 'Credit / Debit Card', 'Net Banking', 'Wallets'].map(m => (
+                  <span key={m} className="text-xs px-3 py-1.5 rounded-full" style={{ backgroundColor: 'var(--bg-soft)', color: 'var(--text-main)' }}>{m}</span>
+                ))}
+              </div>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Cash on Delivery is <strong>not available</strong>.</p>
+            </div>
+
+            {/* Accordion Sections */}
+            <div className="pd-accordions">
+              {sections.map(s => (
+                <div key={s.title} className="yaale-accordion-item">
+                  <button
+                    onClick={() => setOpenSection(openSection === s.title ? null : s.title)}
+                    className="yaale-accordion-btn"
+                  >
+                    <span>{s.title}</span>
+                    <span className={`yaale-accordion-icon${openSection === s.title ? ' open' : ''}`}>+</span>
+                  </button>
+                  <div className={`yaale-accordion-content${openSection === s.title ? ' open' : ''}`}>
+                    <p className="whitespace-pre-line">{s.content}</p>
+                    {s.title === 'Contact Us' && (
+                      <button
+                        onClick={() => setPage('contact')}
+                        className="mt-4 rounded-full px-5 py-2.5 text-xs tracking-widest uppercase transition-colors"
+                        style={{ backgroundColor: 'var(--maroon)', color: 'var(--text-on-dark)' }}
+                      >
+                        Open Contact Page
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>{/* end detail col */}
+        </div>{/* end pd-grid */}
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function CartPage({ cart, setCart, setPage }: { cart: CartItem[], setCart: React.Dispatch<React.SetStateAction<CartItem[]>>, setPage: (p: Page) => void }) {
+  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
+  const shipping = subtotal > 10000 ? 0 : 250
+  const total = subtotal + shipping
+
+  const updateQty = (id: number, qty: number) => {
+    if (qty === 0) setCart(c => c.filter(i => i.id !== id))
+    else setCart(c => c.map(i => i.id === id ? { ...i, qty } : i))
+  }
+
+  if (cart.length === 0) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-ivory text-center px-6">
+      <BagIcon />
+      <p className="font-serif text-3xl text-charcoal">Your bag is empty.</p>
+      <button onClick={() => setPage('shop')}
+        className="bg-charcoal text-champagne px-8 py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+        Explore Sarees
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <h1 className="font-serif text-4xl text-charcoal mb-10">Shopping Bag</h1>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-4">
+            {cart.map(item => (
+              <div key={item.id} className="bg-white rounded-3xl p-5 flex gap-5 border border-border">
+                <div className="w-24 h-32 rounded-2xl overflow-hidden flex-shrink-0 bg-[#f0e9dd]">
+                  <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gold tracking-widest uppercase">{item.category}</p>
+                  <h3 className="font-serif text-lg text-charcoal mt-0.5">{item.name}</h3>
+                  <p className="text-warm-gray text-sm mt-1">₹{item.price.toLocaleString('en-IN')}</p>
+                  <div className="flex items-center gap-3 mt-3">
+                    <div className="flex items-center border border-border rounded-full">
+                      <button onClick={() => updateQty(item.id, item.qty - 1)} className="px-3 py-1 text-warm-gray hover:text-charcoal">−</button>
+                      <span className="px-2 text-sm font-medium">{item.qty}</span>
+                      <button onClick={() => updateQty(item.id, item.qty + 1)} className="px-3 py-1 text-warm-gray hover:text-charcoal">+</button>
+                    </div>
+                    <button onClick={() => updateQty(item.id, 0)} className="text-xs text-warm-gray hover:text-wine tracking-wider uppercase ml-auto">Remove</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-cream rounded-3xl p-6 h-fit">
+            <h2 className="font-serif text-2xl text-charcoal mb-6">Order Summary</h2>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between"><span className="text-warm-gray">Subtotal</span><span className="font-medium">₹{subtotal.toLocaleString('en-IN')}</span></div>
+              <div className="flex justify-between"><span className="text-warm-gray">Shipping</span><span className="font-medium">{shipping === 0 ? 'Free' : `₹${shipping}`}</span></div>
+              <div className="border-t border-border pt-3 flex justify-between text-base font-medium">
+                <span>Total</span><span>₹{total.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+            <button onClick={() => setPage('checkout')}
+              className="w-full mt-6 bg-charcoal text-champagne py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+              Proceed to Checkout
+            </button>
+            <p className="text-center text-xs text-warm-gray mt-3">Secure Online Payment Only · No COD</p>
+          </div>
+        </div>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function WishlistPage({
+  wishlist,
+  isLoading,
+  onWishlist,
+  onAdd,
+  setPage,
+  setSelectedProduct
+}: {
+  wishlist: number[],
+  isLoading: boolean,
+  onWishlist: (id: number) => void,
+  onAdd: (p: Product) => void,
+  setPage: (p: Page) => void,
+  setSelectedProduct: (p: Product) => void
+}) {
+  const { products } = useProductsStore()
+  const items = products.filter(p => wishlist.includes(p.id))
+
+  if (isLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-ivory text-warm-gray" role="status">
+      Loading wishlist...
+    </div>
+  )
+
+  if (items.length === 0) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-ivory text-center px-6">
+      <HeartIcon size={40} />
+      <p className="font-serif text-3xl text-charcoal">Your wishlist is waiting<br />for something beautiful.</p>
+      <button onClick={() => setPage('shop')}
+        className="bg-charcoal text-champagne px-8 py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+        Explore Sarees
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <h1 className="font-serif text-4xl text-charcoal mb-10">Wishlist <span className="text-gold text-2xl font-light">({items.length})</span></h1>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+          {items.map(p => (
+            <ProductCard
+              key={p.id}
+              p={p}
+              onAdd={onAdd}
+              onWishlist={onWishlist}
+              wishlist={wishlist}
+              onClick={() => {
+                setSelectedProduct(p)
+                setPage('product')
+              }}
+            />
+          ))}
+        </div>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function CheckoutPage({
+  setPage,
+  cart,
+  setCart,
+  setLastOrderNumber,
+  customerToken,
+}: {
+  setPage: (p: Page) => void
+  cart: CartItem[]
+  setCart: (c: CartItem[] | ((curr: CartItem[]) => CartItem[])) => void
+  setLastOrderNumber: (orderNumber: string) => void
+  customerToken: string | null
+}) {
+  const [step, setStep] = useState(1)
+  const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([])
+  const [savedAddressesLoading, setSavedAddressesLoading] = useState(false)
+  const [selectedAddressId, setSelectedAddressId] = useState<number | 'new' | null>(null)
+  const [saveToAccount, setSaveToAccount] = useState(true)
+  const [form, setForm] = useState({
+    name: '',
+    phone: '',
+    address: '',
+    landmark: '',
+    city: '',
+    state: '',
+    pin: '',
+  })
+  const [stepError, setStepError] = useState('')
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false)
+  const placingOrderRef = useRef(false)
+  const [payMethod, setPayMethod] = useState('UPI')
+
+  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
+  const shipping = subtotal > 10000 ? 0 : 250
+
+  const update = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  useEffect(() => {
+    if (!customerToken) {
+      setSelectedAddressId('new')
+      return
+    }
+
+    let active = true
+    setSavedAddressesLoading(true)
+
+    fetch('http://127.0.0.1:8000/api/customer/addresses', {
+      headers: {
+        Authorization: `Bearer ${customerToken}`,
+        Accept: 'application/json',
+      },
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (!active || !Array.isArray(data)) return
+        setSavedAddresses(data as CustomerAddress[])
+        if (data.length > 0) {
+          const defaultAddress = data.find((a: CustomerAddress) => a.is_default) || data[0]
+          setSelectedAddressId(defaultAddress.id)
+          setForm({
+            name: defaultAddress.name,
+            phone: defaultAddress.phone,
+            address: defaultAddress.address_line,
+            landmark: defaultAddress.landmark || '',
+            city: defaultAddress.city,
+            state: defaultAddress.state,
+            pin: defaultAddress.pin_code,
+          })
+        } else {
+          setSelectedAddressId('new')
+        }
+      })
+      .catch(() => {
+        if (active) setSelectedAddressId('new')
+      })
+      .finally(() => {
+        if (active) setSavedAddressesLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [customerToken])
+
+  const handleSelectAddress = (addr: CustomerAddress) => {
+    setSelectedAddressId(addr.id)
+    setForm({
+      name: addr.name,
+      phone: addr.phone,
+      address: addr.address_line,
+      landmark: addr.landmark || '',
+      city: addr.city,
+      state: addr.state,
+      pin: addr.pin_code,
+    })
+    setStepError('')
+  }
+
+  const handleSelectNewAddress = () => {
+    setSelectedAddressId('new')
+    setForm({
+      name: '',
+      phone: '',
+      address: '',
+      landmark: '',
+      city: '',
+      state: '',
+      pin: '',
+    })
+    setStepError('')
+  }
+
+  const handleContinueToReview = async () => {
+    setStepError('')
+
+    const name = form.name.trim()
+    const phone = form.phone.trim()
+    const address = form.address.trim()
+    const city = form.city.trim()
+    const state = form.state.trim()
+    const pin = form.pin.trim()
+    const landmark = form.landmark.trim()
+
+    if (!name || !phone || !address || !city || !state || !pin) {
+      setStepError('Please complete all required delivery details.')
+      return
+    }
+
+    if (phone.length < 7) {
+      setStepError('Please enter a valid phone number.')
+      return
+    }
+
+    // When logged-in customer enters a new address and wants to save it to their account
+    if (customerToken && (selectedAddressId === 'new' || savedAddresses.length === 0) && saveToAccount) {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Bearer ${customerToken}`,
+          },
+          body: JSON.stringify({
+            name,
+            phone,
+            address_line: address,
+            landmark: landmark || null,
+            city,
+            state,
+            pin_code: pin,
+            is_default: savedAddresses.length === 0,
+          }),
+        })
+        const savedData = await response.json().catch(() => ({}))
+        if (response.ok && savedData?.id) {
+          setSavedAddresses(prev => {
+            const exists = prev.some(a => a.id === savedData.id)
+            return exists ? prev : [savedData as CustomerAddress, ...prev]
+          })
+          setSelectedAddressId(savedData.id)
+        }
+      } catch (err) {
+        // Backend OrderController will also attempt to auto-save upon order creation
+        console.warn('Address auto-save request note:', err)
+      }
+    }
+
+    setStep(2)
+  }
+
+  const placeOrder = async () => {
+    const name = form.name.trim()
+    const phone = form.phone.trim()
+    const address = form.address.trim()
+    const city = form.city.trim()
+    const state = form.state.trim()
+    const pin = form.pin.trim()
+    const landmark = form.landmark.trim()
+
+    if (!name || !phone || !address || !city || !state || !pin) {
+      alert('Please fill in all delivery details.')
+      setStep(1)
+      return
+    }
+
+    if (cart.length === 0) {
+      alert('Your cart is empty.')
+      setPage('cart')
+      return
+    }
+
+    if (!customerToken) {
+      alert('Please sign in to place your order.')
+      setPage('account-sign-in')
+      return
+    }
+
+    if (placingOrderRef.current) return
+    placingOrderRef.current = true
+    setIsPlacingOrder(true)
+
+    const fullAddress = landmark
+      ? `${address}, Near ${landmark}, ${city}, ${state} - ${pin}`
+      : `${address}, ${city}, ${state} - ${pin}`
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(customerToken ? { Authorization: `Bearer ${customerToken}` } : {}),
+        },
+        body: JSON.stringify({
+          customer_name: name,
+          customer_phone: phone,
+          customer_address: fullAddress,
+          address_line: address,
+          landmark: landmark || null,
+          city,
+          state,
+          pin_code: pin,
+          total_amount: subtotal + shipping,
+          items: cart.map(item => ({
+            product_id: item.id,
+            product_name: item.name,
+            quantity: item.qty,
+            price: item.price,
+          })),
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        console.error('ORDER ERROR:', data)
+        const errorMsg = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join('\n')
+          : data.message || 'Failed to place order'
+        alert(errorMsg)
+        return
+      }
+
+      setCart([])
+      try {
+        localStorage.removeItem(CART_STORAGE_KEY)
+      } catch {
+        // ignore storage errors
+      }
+
+      setLastOrderNumber(data.order_number)
+      setPage('order-success')
+    } catch (error) {
+      console.error('Error placing order:', error)
+      alert('Unable to connect to the server. Please try again.')
+    } finally {
+      placingOrderRef.current = false
+      setIsPlacingOrder(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <h1 className="font-serif text-4xl text-charcoal mb-2">Checkout</h1>
+        {/* Steps */}
+        <div className="flex items-center gap-3 mb-10">
+          {['Delivery', 'Review', 'Payment'].map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium transition-all ${step > i + 1 ? 'bg-wine text-white' : step === i + 1 ? 'bg-charcoal text-champagne' : 'bg-cream text-warm-gray'}`}>
+                {step > i + 1 ? '✓' : i + 1}
+              </div>
+              <span className={`text-xs tracking-wider uppercase ${step === i + 1 ? 'text-charcoal font-medium' : 'text-warm-gray'}`}>{s}</span>
+              {i < 2 && <div className="w-8 h-px bg-cream mx-1" />}
+            </div>
+          ))}
+        </div>
+
+        {step === 1 && (
+          <div className="bg-white rounded-3xl border border-border p-6 sm:p-8">
+            <h2 className="font-serif text-2xl text-charcoal mb-6">Delivery Address</h2>
+
+            {/* If logged in customer has saved addresses */}
+            {customerToken && savedAddresses.length > 0 && (
+              <div className="mb-8">
+                <p className="text-xs uppercase tracking-wider text-warm-gray mb-3 font-medium">Select a Saved Address</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  {savedAddresses.map(addr => {
+                    const isSelected = selectedAddressId === addr.id
+                    return (
+                      <div
+                        key={addr.id}
+                        onClick={() => handleSelectAddress(addr)}
+                        className={`cursor-pointer rounded-2xl border p-4 transition-all text-left ${isSelected ? 'border-charcoal bg-cream/30 ring-1 ring-charcoal' : 'border-border hover:border-champagne bg-white'}`}
+                      >
+                        <div className="flex justify-between items-start gap-2 mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="checkout-selected-address"
+                              checked={isSelected}
+                              onChange={() => handleSelectAddress(addr)}
+                              className="accent-charcoal"
+                            />
+                            <p className="text-sm font-medium text-charcoal">{addr.name}</p>
+                          </div>
+                          {addr.is_default && (
+                            <span className="bg-cream text-gold text-[10px] px-2 py-0.5 rounded-full font-medium border border-gold/20">
+                              Default
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-warm-gray leading-relaxed pl-6">
+                          {addr.address_line}{addr.landmark ? `, Near ${addr.landmark}` : ''}
+                        </p>
+                        <p className="text-xs text-warm-gray pl-6">
+                          {addr.city}, {addr.state} - {addr.pin_code}
+                        </p>
+                        <p className="text-xs text-warm-gray pl-6 mt-1">
+                          Phone: <span className="text-charcoal">{addr.phone}</span>
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSelectNewAddress}
+                  className={`text-xs px-4 py-2 rounded-full border transition-all uppercase tracking-wider ${selectedAddressId === 'new' ? 'bg-charcoal text-champagne border-charcoal' : 'border-border text-warm-gray hover:border-charcoal hover:text-charcoal'}`}
+                >
+                  + Deliver to a different address
+                </button>
+              </div>
+            )}
+
+            {savedAddressesLoading && (
+              <p className="text-xs text-warm-gray mb-4">Loading your saved addresses...</p>
+            )}
+
+            {/* Address Form (shown when entering new address or user has no saved addresses) */}
+            {(selectedAddressId === 'new' || savedAddresses.length === 0) && (
+              <div className="pt-2 border-t border-border mt-4">
+                {savedAddresses.length > 0 && (
+                  <p className="text-xs uppercase tracking-wider text-warm-gray mb-4 font-medium">New Address Details</p>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      Full Name <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={e => update('name', e.target.value)}
+                      placeholder="e.g. Priya Sharma"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      Mobile Number <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      value={form.phone}
+                      onChange={e => update('phone', e.target.value)}
+                      placeholder="e.g. 9876543210"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      Full Address (House / Flat / Street) <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.address}
+                      onChange={e => update('address', e.target.value)}
+                      placeholder="e.g. 42, Anna Nagar West"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      Landmark <span className="text-warm-gray/60 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.landmark}
+                      onChange={e => update('landmark', e.target.value)}
+                      placeholder="e.g. Near Shanthi Colony Signal"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      City <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.city}
+                      onChange={e => update('city', e.target.value)}
+                      placeholder="e.g. Chennai"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      State <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.state}
+                      onChange={e => update('state', e.target.value)}
+                      placeholder="e.g. Tamil Nadu"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 sm:max-w-xs">
+                    <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                      PIN Code <span className="text-wine">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.pin}
+                      onChange={e => update('pin', e.target.value)}
+                      placeholder="e.g. 600040"
+                      className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {customerToken && (
+                  <label className="flex items-center gap-2.5 mt-4 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveToAccount}
+                      onChange={e => setSaveToAccount(e.target.checked)}
+                      className="w-4 h-4 rounded text-charcoal accent-charcoal focus:ring-champagne"
+                    />
+                    <span className="text-xs text-charcoal">Save this address to my account for future orders</span>
+                  </label>
+                )}
+              </div>
+            )}
+
+            {stepError && (
+              <p role="alert" className="mt-4 text-xs text-wine font-medium">
+                {stepError}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={handleContinueToReview}
+              className="mt-8 bg-charcoal text-champagne px-10 py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal/90 transition-colors"
+            >
+              Continue to Review
+            </button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="bg-white rounded-3xl border border-border p-6 sm:p-8">
+            <h2 className="font-serif text-2xl text-charcoal mb-6">Order Review</h2>
+
+            {/* Shipping Address Snapshot Card */}
+            <div className="border border-border rounded-2xl p-4 bg-cream/30 text-sm mb-6">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] tracking-[0.2em] uppercase text-gold font-medium">Shipping To</span>
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-xs text-warm-gray hover:text-charcoal underline underline-offset-4"
+                >
+                  Change
+                </button>
+              </div>
+              <p className="font-medium text-charcoal">
+                {form.name} <span className="text-xs text-warm-gray font-normal">({form.phone})</span>
+              </p>
+              <p className="text-xs text-warm-gray mt-1 leading-relaxed">
+                {form.address}{form.landmark ? `, Near ${form.landmark}` : ''}, {form.city}, {form.state} - {form.pin}
+              </p>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              {cart.map(item => (
+                <div key={item.id} className="flex gap-4 items-center">
+                  <div className="w-16 h-20 rounded-2xl overflow-hidden bg-[#f0e9dd] flex-shrink-0">
+                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-sm text-charcoal">{item.name}</p>
+                    <p className="text-xs text-warm-gray">Qty: {item.qty}</p>
+                  </div>
+                  <p className="font-medium text-sm">₹{(item.price * item.qty).toLocaleString('en-IN')}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-border pt-4 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-warm-gray">Subtotal</span><span>₹{subtotal.toLocaleString('en-IN')}</span></div>
+              <div className="flex justify-between"><span className="text-warm-gray">Shipping</span><span>{shipping === 0 ? 'Free' : `₹${shipping}`}</span></div>
+              <div className="flex justify-between font-medium text-base pt-2 border-t border-border"><span>Total</span><span>₹{(subtotal + shipping).toLocaleString('en-IN')}</span></div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button onClick={() => setStep(1)} className="border border-border text-warm-gray px-6 py-3.5 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:text-charcoal transition-colors">Back</button>
+              <button onClick={() => setStep(3)} className="bg-charcoal text-champagne px-10 py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal/90 transition-colors">Continue to Payment</button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="bg-white rounded-3xl border border-border p-6 sm:p-8">
+            <h2 className="font-serif text-2xl text-charcoal mb-6">Payment</h2>
+            <div className="space-y-3 mb-8">
+              {['UPI', 'Credit / Debit Card', 'Net Banking', 'Wallets'].map(m => (
+                <label key={m} className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${payMethod === m ? 'border-charcoal bg-cream' : 'border-border hover:border-champagne'}`}>
+                  <input type="radio" checked={payMethod === m} onChange={() => setPayMethod(m)} className="accent-wine" />
+                  <span className="text-sm font-medium text-charcoal">{m}</span>
+                </label>
+              ))}
+            </div>
+            <div className="bg-cream rounded-2xl p-4 mb-6 text-center">
+              <p className="text-xs text-warm-gray">Online Payment Only · No Cash on Delivery · Secure & Encrypted</p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setStep(2)} disabled={isPlacingOrder} className="border border-border text-warm-gray px-6 py-3.5 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:text-charcoal transition-colors disabled:opacity-50">Back</button>
+              <button onClick={placeOrder} disabled={isPlacingOrder}
+                className="flex-1 bg-champagne text-charcoal py-3.5 rounded-full text-xs tracking-widest uppercase font-semibold hover:bg-charcoal hover:text-champagne transition-colors disabled:opacity-60">
+                {isPlacingOrder ? 'Processing Order...' : 'Pay Securely & Place Order'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function OrderSuccessPage({
+  setPage,
+  orderNumber,
+}: {
+  setPage: (p: Page) => void
+  orderNumber: string
+}) {
+  const orderNo = orderNumber
+  return (
+    <div className="min-h-screen bg-ivory flex flex-col items-center justify-center px-6 text-center">
+      <div className="w-20 h-20 rounded-full bg-cream flex items-center justify-center mb-6 border border-champagne">
+        <span className="text-wine text-3xl">✓</span>
+      </div>
+      <p className="text-gold text-xs tracking-widest uppercase mb-3">Order Confirmed</p>
+      <h1 className="font-serif text-4xl sm:text-5xl text-charcoal mb-4">Thank you for your order.</h1>
+      <p className="text-warm-gray font-light mb-10 max-w-sm">Your saree is being prepared with care. You'll receive an update on WhatsApp and Email shortly.</p>
+      <div className="bg-white rounded-3xl border border-border p-6 mb-10 w-full max-w-sm text-sm">
+        <div className="space-y-3">
+          {[['Order Number', orderNo], ['Order Date', new Date().toDateString()], ['Payment Status', 'Paid'], ['Est. Delivery', new Date(Date.now() + 6 * 864e5).toDateString()]].map(([k, v]) => (
+            <div key={k} className="flex justify-between">
+              <span className="text-warm-gray">{k}</span>
+              <span className="font-medium text-charcoal">{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-3 justify-center">
+        <button onClick={() => setPage('order-tracking')} className="border border-charcoal text-charcoal px-6 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">Track Order</button>
+        <button onClick={() => setPage('home')} className="bg-charcoal text-champagne px-6 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">Continue Shopping</button>
+      </div>
+    </div>
+  )
+}
+
+const DELIVERY_TIMELINE_DAYS = 6
+
+function formatExpectedDeliveryDate(order: CustomerOrder | { expected_delivery_date?: string | null; created_at?: string; status?: string }): string {
+  if (order.status === 'Cancelled') {
+    return 'Not yet available.'
+  }
+
+  const rawDate = order.expected_delivery_date
+  if (rawDate) {
+    const parsed = new Date(rawDate.includes('T') ? rawDate : `${rawDate}T00:00:00`)
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    }
+  }
+
+  if (order.created_at) {
+    const created = new Date(order.created_at)
+    if (!isNaN(created.getTime())) {
+      const estimated = new Date(created.getTime() + DELIVERY_TIMELINE_DAYS * 24 * 60 * 60 * 1000)
+      return estimated.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    }
+  }
+
+  return 'Not yet available.'
+}
+
+function OrderTrackingPage({
+  setPage,
+  orderNumber,
+  customerSession,
+}: {
+  setPage: (p: Page) => void
+  orderNumber: string
+  customerSession: CustomerAuthSession | null
+}) {
+  const [order, setOrder] = useState<CustomerOrder | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setOrder(null)
+    setError('')
+
+    if (!customerSession || !orderNumber) {
+      setLoading(false)
+      return () => { active = false }
+    }
+
+    setLoading(true)
+    const fetchOrder = async () => {
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:8000/api/customer/orders/${encodeURIComponent(orderNumber)}`,
+          { headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' } },
+        )
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          throw new Error(response.status === 404
+            ? 'This order could not be found in your account.'
+            : data.message || 'Unable to load order tracking.')
+        }
+
+        if (active) setOrder(data as CustomerOrder)
+      } catch (fetchError) {
+        if (active) {
+          setError(fetchError instanceof Error ? fetchError.message : 'Unable to load order tracking.')
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void fetchOrder()
+    return () => { active = false }
+  }, [customerSession?.token, orderNumber])
+
+  const history = [...(order?.status_history ?? [])]
+    .sort((first, second) => new Date(first.created_at).getTime() - new Date(second.created_at).getTime())
+
+  const formatOrderDate = (value?: string) => value
+    ? new Date(value).toLocaleString('en-IN')
+    : '—'
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-12">
+        <h1 className="font-serif text-4xl text-charcoal mb-2">Track Order</h1>
+        <p className="text-warm-gray font-light mb-10">{orderNumber ? `Order #${orderNumber}` : 'Your order tracking details'}</p>
+
+        {loading ? (
+          <p role="status" className="bg-white rounded-3xl border border-border p-8 text-sm text-warm-gray">Loading order details...</p>
+        ) : !customerSession ? (
+          <div className="bg-white rounded-3xl border border-border p-8">
+            <p className="text-sm text-warm-gray">Sign in to view your order tracking.</p>
+            <button onClick={() => setPage('account-sign-in')} className="mt-5 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">Sign In</button>
+          </div>
+        ) : error ? (
+          <div role="alert" className="bg-white rounded-3xl border border-border p-8">
+            <p className="text-sm text-red-700">{error}</p>
+            <button onClick={() => setPage('account')} className="mt-5 border border-charcoal text-charcoal px-6 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">My Orders</button>
+          </div>
+        ) : !order ? (
+          <div className="bg-white rounded-3xl border border-border p-8">
+            <p className="text-sm text-warm-gray">Select an order from My Orders to view its tracking details.</p>
+            <button onClick={() => setPage('account')} className="mt-5 border border-charcoal text-charcoal px-6 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">My Orders</button>
+          </div>
+        ) : (
+          <>
+            <div className="bg-white rounded-3xl border border-border p-8 mb-6">
+              <h2 className="font-serif text-2xl text-charcoal mb-6">Order Details</h2>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 text-sm">
+                <div>
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Order Number</dt>
+                  <dd className="mt-1 font-medium text-charcoal">{order.order_number}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Order Date</dt>
+                  <dd className="mt-1 text-charcoal">{formatOrderDate(order.created_at)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Payment Status</dt>
+                  <dd className="mt-1 text-charcoal">{order.payment_status}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Order Total</dt>
+                  <dd className="mt-1 font-medium text-charcoal">₹{Number(order.total_amount).toLocaleString('en-IN')}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Expected Delivery Date</dt>
+                  <dd className="mt-1 font-medium text-charcoal">{formatExpectedDeliveryDate(order)}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Shipping Address</dt>
+                  <dd className="mt-1 leading-relaxed text-charcoal">{order.customer_address}</dd>
+                </div>
+              </dl>
+
+              <div className="border-t border-border mt-6 pt-6">
+                <h3 className="font-serif text-xl text-charcoal mb-4">Purchased Sarees</h3>
+                <div className="space-y-4">
+                  {order.items.map(item => (
+                    <div key={item.id} className="flex items-center gap-4">
+                      {item.product?.image && (
+                        <img src={productImageUrl(item.product.image)} alt={item.product_name} className="h-16 w-14 rounded-xl object-cover bg-[#f0e9dd]" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-charcoal">{item.product_name}</p>
+                        <p className="mt-1 text-xs text-warm-gray">Quantity: {item.quantity}</p>
+                      </div>
+                      <p className="shrink-0 text-sm text-charcoal">₹{(Number(item.price) * item.quantity).toLocaleString('en-IN')}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-border p-8 mb-6">
+              <h2 className="font-serif text-2xl text-charcoal mb-6">Order Status</h2>
+              {history.length === 0 ? (
+                <p className="text-sm text-warm-gray">No status updates are available yet.</p>
+              ) : (
+                <div className="relative">
+                  {history.map((event, index) => (
+                    <div key={event.id} className="flex gap-4 pb-6 last:pb-0 relative">
+                      <div className="flex flex-col items-center">
+                        <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 z-10 ${index === history.length - 1 ? 'bg-wine border-wine' : 'bg-white border-champagne'}`} />
+                        {index < history.length - 1 && <div className="w-0.5 flex-1 mt-1 bg-cream" style={{ minHeight: '28px' }} />}
+                      </div>
+                      <div className="pb-2">
+                        <p className="text-sm font-medium text-charcoal">{event.status}</p>
+                        <p className="text-xs text-gold mt-0.5">{formatOrderDate(event.created_at)}</p>
+                        {event.note && <p className="text-xs text-warm-gray mt-1">{event.note}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <button onClick={() => setPage('home')}
+          className="bg-charcoal text-champagne px-8 py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+          Continue Shopping
+        </button>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCustomerProfileUpdated, onCustomerLogout, onTrackOrder, isSignIn }: {
+  setPage: (p: Page) => void
+  customerSession: CustomerAuthSession | null
+  onCustomerLoginSuccess: (session: CustomerAuthSession) => void
+  onCustomerProfileUpdated: (user: CustomerAuthSession['user']) => void
+  onCustomerLogout: () => void
+  onTrackOrder: (orderNumber: string) => void
+  isSignIn: boolean
+}) {
+  const [tab, setTab] = useState('Profile')
+  const [myOrders, setMyOrders] = useState<CustomerOrder[]>([])
+  const [myOrdersLoading, setMyOrdersLoading] = useState(true)
+  const [myOrdersError, setMyOrdersError] = useState('')
+  const [registration, setRegistration] = useState({ name: '', email: '', password: '', password_confirmation: '' })
+  const [registrationMessage, setRegistrationMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [registrationLoading, setRegistrationLoading] = useState(false)
+  const [login, setLogin] = useState({ email: '', password: '' })
+  const [loginError, setLoginError] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [profileDraft, setProfileDraft] = useState({ name: customerSession?.user.name ?? '', email: customerSession?.user.email ?? '' })
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([])
+  const [addressesLoading, setAddressesLoading] = useState(false)
+  const [addressesError, setAddressesError] = useState('')
+  const [addressFeedback, setAddressFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false)
+  const [editingAddress, setEditingAddress] = useState<CustomerAddress | null>(null)
+  const [addressForm, setAddressForm] = useState({
+    name: '',
+    phone: '',
+    address_line: '',
+    landmark: '',
+    city: '',
+    state: '',
+    pin_code: '',
+    is_default: false,
+  })
+  const [addressFormError, setAddressFormError] = useState('')
+  const [isSavingAddress, setIsSavingAddress] = useState(false)
+  const [addressActionId, setAddressActionId] = useState<number | null>(null)
+  const savingAddressLockRef = useRef(false)
+
+  const handleCustomerLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginLoading(true)
+    setLoginError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/customer/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(login),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : ''
+        throw new Error(errors || data.message || 'Unable to sign in. Please check your details.')
+      }
+
+      onCustomerLoginSuccess(data as CustomerAuthSession)
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  const handleRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setRegistrationLoading(true)
+    setRegistrationMessage(null)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(registration),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : ''
+        throw new Error(errors || data.message || 'Unable to create your account. Please try again.')
+      }
+
+      setRegistration({ name: '', email: '', password: '', password_confirmation: '' })
+      onCustomerLoginSuccess(data as CustomerAuthSession)
+    } catch (error) {
+      setRegistrationMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to create your account. Please try again.',
+      })
+    } finally {
+      setRegistrationLoading(false)
+    }
+  }
+
+  const handleProfileUpdate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!customerSession) return
+
+    setProfileSaving(true)
+    setProfileMessage(null)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/customer/user', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${customerSession.token}`,
+        },
+        body: JSON.stringify(profileDraft),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : ''
+        throw new Error(errors || data.message || 'Unable to update your profile.')
+      }
+
+      const updatedUser = data as CustomerAuthSession['user']
+      setProfileDraft({ name: updatedUser.name, email: updatedUser.email })
+      onCustomerProfileUpdated(updatedUser)
+      setProfileMessage({ type: 'success', text: 'Your profile has been updated.' })
+    } catch (error) {
+      setProfileMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to update your profile.',
+      })
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!customerSession) {
+      setProfileDraft({ name: '', email: '' })
+      return
+    }
+
+    let active = true
+    setProfileLoading(true)
+    setProfileMessage(null)
+
+    const loadProfile = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/customer/user', {
+          headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
+        })
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) throw new Error(data.message || 'Unable to load your profile.')
+        if (active) setProfileDraft({ name: data.name, email: data.email })
+      } catch (error) {
+        if (active) {
+          setProfileMessage({
+            type: 'error',
+            text: error instanceof Error ? error.message : 'Unable to load your profile.',
+          })
+        }
+      } finally {
+        if (active) setProfileLoading(false)
+      }
+    }
+
+    void loadProfile()
+    return () => { active = false }
+  }, [customerSession?.token])
+
+  useEffect(() => {
+    let active = true
+    setMyOrdersError('')
+
+    if (!customerSession) {
+      setMyOrders([])
+      setMyOrdersLoading(false)
+      return () => { active = false }
+    }
+
+    setMyOrdersLoading(true)
+    const fetchMyOrders = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/customer/orders', {
+          headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
+        })
+
+        if (response.status === 401 || response.status === 403) {
+          if (active) {
+            setMyOrdersError('Your session has expired. Please sign in again.')
+            setMyOrders([])
+          }
+          onCustomerLogout()
+          return
+        }
+
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) throw new Error(data.message || 'Unable to load your orders.')
+        if (!Array.isArray(data)) throw new Error('The order response was invalid.')
+        if (active) setMyOrders(data as CustomerOrder[])
+      } catch (fetchError) {
+        if (active) {
+          setMyOrdersError(fetchError instanceof Error ? fetchError.message : 'Unable to load your orders.')
+          setMyOrders([])
+        }
+      }
+
+      if (active) setMyOrdersLoading(false)
+    }
+
+    void fetchMyOrders()
+    return () => { active = false }
+  }, [customerSession?.token])
+
+  useEffect(() => {
+    let active = true
+    setAddressesError('')
+
+    if (!customerSession) {
+      setAddresses([])
+      setAddressesLoading(false)
+      return () => { active = false }
+    }
+
+    setAddressesLoading(true)
+    const fetchAddresses = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+          headers: {
+            Authorization: `Bearer ${customerSession.token}`,
+            Accept: 'application/json',
+          },
+        })
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) throw new Error(data.message || 'Unable to load your saved addresses.')
+        if (!Array.isArray(data)) throw new Error('Invalid address response.')
+        if (active) setAddresses(data as CustomerAddress[])
+      } catch (err) {
+        if (active) {
+          setAddressesError(err instanceof Error ? err.message : 'Unable to load saved addresses.')
+          setAddresses([])
+        }
+      } finally {
+        if (active) setAddressesLoading(false)
+      }
+    }
+
+    void fetchAddresses()
+    return () => { active = false }
+  }, [customerSession?.token])
+
+  const handleOpenAddAddress = () => {
+    setEditingAddress(null)
+    setAddressForm({
+      name: customerSession?.user?.name ?? '',
+      phone: '',
+      address_line: '',
+      landmark: '',
+      city: '',
+      state: '',
+      pin_code: '',
+      is_default: addresses.length === 0,
+    })
+    setAddressFormError('')
+    setIsAddressModalOpen(true)
+  }
+
+  const handleOpenEditAddress = (addr: CustomerAddress) => {
+    setEditingAddress(addr)
+    setAddressForm({
+      name: addr.name,
+      phone: addr.phone,
+      address_line: addr.address_line,
+      landmark: addr.landmark ?? '',
+      city: addr.city,
+      state: addr.state,
+      pin_code: addr.pin_code,
+      is_default: addr.is_default,
+    })
+    setAddressFormError('')
+    setIsAddressModalOpen(true)
+  }
+
+  const handleSaveAddress = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!customerSession) return
+
+    setAddressFormError('')
+
+    const name = addressForm.name.trim()
+    const phone = addressForm.phone.trim()
+    const addressLine = addressForm.address_line.trim()
+    const city = addressForm.city.trim()
+    const state = addressForm.state.trim()
+    const pinCode = addressForm.pin_code.trim()
+    const landmark = addressForm.landmark.trim()
+
+    if (!name || !phone || !addressLine || !city || !state || !pinCode) {
+      setAddressFormError('Please fill in all required fields.')
+      return
+    }
+
+    if (phone.length < 7) {
+      setAddressFormError('Please enter a valid phone number.')
+      return
+    }
+
+    // Prevent duplicate in-flight submissions
+    if (savingAddressLockRef.current) return
+    savingAddressLockRef.current = true
+    setIsSavingAddress(true)
+
+    try {
+      const isEditing = Boolean(editingAddress)
+      const url = isEditing
+        ? `http://127.0.0.1:8000/api/customer/addresses/${editingAddress!.id}`
+        : 'http://127.0.0.1:8000/api/customer/addresses'
+
+      const response = await fetch(url, {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${customerSession.token}`,
+        },
+        body: JSON.stringify({
+          name,
+          phone,
+          address_line: addressLine,
+          city,
+          state,
+          pin_code: pinCode,
+          landmark: landmark || null,
+          is_default: addressForm.is_default,
+        }),
+      })
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errorText = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : data.message || 'Failed to save address.'
+        throw new Error(errorText)
+      }
+
+      // Refresh address list to sync default states
+      const listResponse = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+        headers: {
+          Authorization: `Bearer ${customerSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+      const listData = await listResponse.json().catch(() => [])
+      if (Array.isArray(listData)) {
+        setAddresses(listData as CustomerAddress[])
+      }
+
+      setIsAddressModalOpen(false)
+      setAddressFeedback({
+        type: 'success',
+        message: isEditing ? 'Address updated successfully.' : 'Address saved successfully.',
+      })
+      setTimeout(() => setAddressFeedback(null), 4000)
+    } catch (err) {
+      setAddressFormError(err instanceof Error ? err.message : 'Unable to save address. Please try again.')
+    } finally {
+      savingAddressLockRef.current = false
+      setIsSavingAddress(false)
+    }
+  }
+
+  const handleSetDefaultAddress = async (id: number) => {
+    if (!customerSession || addressActionId) return
+    setAddressActionId(id)
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/customer/addresses/${id}/default`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${customerSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Failed to set default address.')
+
+      setAddresses(prev =>
+        prev.map(a => ({
+          ...a,
+          is_default: a.id === id,
+        }))
+      )
+      setAddressFeedback({ type: 'success', message: 'Default address updated.' })
+      setTimeout(() => setAddressFeedback(null), 3000)
+    } catch (err) {
+      setAddressFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to set default address.',
+      })
+    } finally {
+      setAddressActionId(null)
+    }
+  }
+
+  const handleDeleteAddress = async (id: number) => {
+    if (!customerSession || addressActionId) return
+
+    if (!window.confirm('Are you sure you want to delete this saved address?')) {
+      return
+    }
+
+    setAddressActionId(id)
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/customer/addresses/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${customerSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Failed to delete address.')
+
+      // Refresh list to properly reflect any new default promotion
+      const listResponse = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+        headers: {
+          Authorization: `Bearer ${customerSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+      const listData = await listResponse.json().catch(() => [])
+      if (Array.isArray(listData)) {
+        setAddresses(listData as CustomerAddress[])
+      } else {
+        setAddresses(prev => prev.filter(a => a.id !== id))
+      }
+
+      setAddressFeedback({ type: 'success', message: 'Address removed successfully.' })
+      setTimeout(() => setAddressFeedback(null), 3000)
+    } catch (err) {
+      setAddressFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to delete address.',
+      })
+    } finally {
+      setAddressActionId(null)
+    }
+  }
+
+  const tabs = ['Profile', 'My Orders', 'Track Orders', 'Wishlist', 'Addresses']
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <h1 className="font-serif text-4xl text-charcoal mb-10">{customerSession ? 'My Account' : isSignIn ? 'Sign In' : 'Create an Account'}</h1>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+          <nav className="space-y-1">
+            {customerSession && tabs.map(t => (
+              <button key={t} onClick={() => t === 'Wishlist' ? setPage('wishlist') : setTab(t)}
+                className={`w-full text-left px-4 py-3 rounded-2xl text-sm transition-all ${tab === t ? 'bg-charcoal text-champagne' : 'text-warm-gray hover:bg-cream hover:text-charcoal'}`}>
+                {t}
+              </button>
+            ))}
+            {customerSession ? (
+              <button onClick={onCustomerLogout} className="w-full text-left px-4 py-3 rounded-2xl text-sm text-wine hover:bg-cream transition-all">Logout</button>
+            ) : (
+              <>
+                <button onClick={() => setPage('account-sign-in')} className="w-full text-left px-4 py-3 rounded-2xl text-sm text-warm-gray hover:bg-cream hover:text-charcoal transition-all">Sign In</button>
+                <button onClick={() => setPage('account')} className="w-full text-left px-4 py-3 rounded-2xl text-sm text-warm-gray hover:bg-cream hover:text-charcoal transition-all">Create an Account</button>
+              </>
+            )}
+          </nav>
+          <div className="md:col-span-3 bg-white rounded-3xl border border-border p-8">
+            {tab === 'Profile' && (
+              <div>
+                {customerSession ? (
+                  <>
+                    <h2 className="font-serif text-2xl text-charcoal mb-6">Profile</h2>
+                    <form className="space-y-4" onSubmit={handleProfileUpdate}>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="customer-profile-name" className="text-xs tracking-wider uppercase text-warm-gray block mb-1">Full Name</label>
+                          <input id="customer-profile-name" value={profileDraft.name} onChange={event => setProfileDraft(current => ({ ...current, name: event.target.value }))} autoComplete="name" maxLength={255} required disabled={profileLoading || profileSaving} className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent disabled:opacity-60" />
+                        </div>
+                        <div>
+                          <label htmlFor="customer-profile-email" className="text-xs tracking-wider uppercase text-warm-gray block mb-1">Email</label>
+                          <input id="customer-profile-email" type="email" value={profileDraft.email} onChange={event => setProfileDraft(current => ({ ...current, email: event.target.value }))} autoComplete="email" maxLength={255} required disabled={profileLoading || profileSaving} className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent disabled:opacity-60" />
+                        </div>
+                      </div>
+                      {profileMessage && <p role={profileMessage.type === 'error' ? 'alert' : 'status'} className={`text-sm ${profileMessage.type === 'error' ? 'text-red-700' : 'text-green-700'}`}>{profileMessage.text}</p>}
+                      <button type="submit" disabled={profileLoading || profileSaving} className="mt-2 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors disabled:opacity-60">
+                        {profileLoading ? 'Loading Profile...' : profileSaving ? 'Saving...' : 'Save Changes'}
+                      </button>
+                    </form>
+                  </>
+                ) : isSignIn ? (
+                  <>
+                    <h2 className="font-serif text-2xl text-charcoal mb-6">Sign In</h2>
+                    <form className="space-y-4" onSubmit={handleCustomerLogin}>
+                      <div>
+                        <label htmlFor="customer-login-email" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Email Address</label>
+                        <input id="customer-login-email" type="email" value={login.email} onChange={event => setLogin(current => ({ ...current, email: event.target.value }))} autoComplete="email" required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+                      </div>
+                      <div>
+                        <label htmlFor="customer-login-password" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Password</label>
+                        <input id="customer-login-password" type="password" value={login.password} onChange={event => setLogin(current => ({ ...current, password: event.target.value }))} autoComplete="current-password" required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+                      </div>
+                      {loginError && <p role="alert" className="text-sm text-red-700">{loginError}</p>}
+                      <button type="submit" disabled={loginLoading} className="mt-2 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors disabled:opacity-60">
+                        {loginLoading ? 'Signing In...' : 'Sign In'}
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="font-serif text-2xl text-charcoal mb-6">Create an Account</h2>
+                    <form className="space-y-4" onSubmit={handleRegistration}>
+                  {[
+                    { label: 'Full Name', name: 'name', type: 'text', autoComplete: 'name' },
+                    { label: 'Email Address', name: 'email', type: 'email', autoComplete: 'email' },
+                    { label: 'Password', name: 'password', type: 'password', autoComplete: 'new-password' },
+                    { label: 'Confirm Password', name: 'password_confirmation', type: 'password', autoComplete: 'new-password' },
+                  ].map(field => (
+                    <div key={field.name}>
+                      <label htmlFor={`registration-${field.name}`} className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">{field.label}</label>
+                      <input
+                        id={`registration-${field.name}`}
+                        name={field.name}
+                        type={field.type}
+                        value={registration[field.name as keyof typeof registration]}
+                        onChange={event => setRegistration(current => ({ ...current, [field.name]: event.target.value }))}
+                        required
+                        autoComplete={field.autoComplete}
+                        minLength={field.name.startsWith('password') ? 8 : undefined}
+                        className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent"
+                      />
+                    </div>
+                  ))}
+                  {registrationMessage && (
+                    <p role={registrationMessage.type === 'error' ? 'alert' : 'status'} className={`text-sm ${registrationMessage.type === 'error' ? 'text-red-700' : 'text-green-700'}`}>
+                      {registrationMessage.text}
+                    </p>
+                  )}
+                  <button type="submit" disabled={registrationLoading} className="mt-2 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors disabled:opacity-60">
+                    {registrationLoading ? 'Creating Account...' : 'Create Account'}
+                  </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            )}
+            {tab === 'My Orders' && (
+              <div>
+                <h2 className="font-serif text-2xl text-charcoal mb-6">My Orders</h2>
+                {myOrdersLoading ? (
+                  <p role="status" className="text-sm text-warm-gray">Loading your orders...</p>
+                ) : myOrdersError ? (
+                  <p role="alert" className="text-sm text-red-700">{myOrdersError}</p>
+                ) : myOrders.length === 0 ? (
+                  <p className="text-sm text-warm-gray">You have no orders yet.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {myOrders.map(order => (
+                      <article key={order.id} className="border border-border rounded-2xl p-4 sm:p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-charcoal">Order #{order.order_number}</p>
+                            <p className="mt-1 text-xs text-warm-gray">{new Date(order.created_at).toLocaleString('en-IN')}</p>
+                          </div>
+                          <span className="bg-cream text-wine text-xs px-3 py-1 rounded-full">{order.status}</span>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          {order.items.map(item => (
+                            <div key={item.id} className="flex justify-between gap-4 text-sm">
+                              <span className="text-charcoal">{item.product_name} × {item.quantity}</span>
+                              <span className="shrink-0 text-charcoal">₹{(Number(item.price) * item.quantity).toLocaleString('en-IN')}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 border-t border-border pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-xs tracking-wider uppercase text-warm-gray">Expected Delivery Date</p>
+                            <p className="mt-1 font-medium text-charcoal">{formatExpectedDeliveryDate(order)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs tracking-wider uppercase text-warm-gray">Payment</p>
+                            <p className="mt-1 text-charcoal">{order.payment_status}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs tracking-wider uppercase text-warm-gray">Total</p>
+                            <p className="mt-1 font-medium text-charcoal">₹{Number(order.total_amount).toLocaleString('en-IN')}</p>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="text-xs tracking-wider uppercase text-warm-gray">Shipping Address</p>
+                            <p className="mt-1 leading-relaxed text-charcoal">{order.customer_address}</p>
+                          </div>
+                        </div>
+                        <button onClick={() => onTrackOrder(order.order_number)} className="mt-4 border border-charcoal text-charcoal px-6 py-2.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">
+                          Track Order
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+)}
+            {tab === 'Track Orders' && (
+              <div>
+                <h2 className="font-serif text-2xl text-charcoal mb-6">Track Your Order</h2>
+                {myOrdersLoading ? (
+                  <p role="status" className="text-sm text-warm-gray">Loading your orders...</p>
+                ) : myOrdersError ? (
+                  <p role="alert" className="text-sm text-red-700">{myOrdersError}</p>
+                ) : myOrders.length === 0 ? (
+                  <p className="text-sm text-warm-gray">There are no orders to track yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {myOrders.map(order => (
+                      <div key={order.id} className="flex flex-wrap items-center justify-between gap-3 border border-border rounded-2xl p-4">
+                        <div>
+                          <p className="text-sm font-medium text-charcoal">Order #{order.order_number}</p>
+                          <p className="mt-1 text-xs text-warm-gray">{order.status} · {new Date(order.created_at).toLocaleDateString('en-IN')}</p>
+                        </div>
+                        <button onClick={() => onTrackOrder(order.order_number)} className="border border-charcoal text-charcoal px-6 py-2.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">Track Order</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {tab === 'Addresses' && (
+              <div>
+                <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+                  <h2 className="font-serif text-2xl text-charcoal">Saved Addresses</h2>
+                  {addresses.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleOpenAddAddress}
+                      className="border border-border text-charcoal px-5 py-2.5 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:bg-cream transition-all"
+                    >
+                      + Add Address
+                    </button>
+                  )}
+                </div>
+
+                {addressFeedback && (
+                  <div
+                    role={addressFeedback.type === 'error' ? 'alert' : 'status'}
+                    className={`p-4 rounded-2xl mb-6 text-xs font-medium border ${
+                      addressFeedback.type === 'success'
+                        ? 'bg-green-50 text-green-800 border-green-200'
+                        : 'bg-red-50 text-red-800 border-red-200'
+                    }`}
+                  >
+                    {addressFeedback.message}
+                  </div>
+                )}
+
+                {addressesLoading && (
+                  <div className="py-8 text-center text-sm text-warm-gray" role="status">
+                    Loading your saved addresses...
+                  </div>
+                )}
+
+                {addressesError && !addressesLoading && (
+                  <div role="alert" className="p-4 rounded-2xl bg-red-50 text-red-800 border border-red-200 text-xs mb-4">
+                    {addressesError}
+                  </div>
+                )}
+
+                {!addressesLoading && addresses.length === 0 && (
+                  <div className="text-center py-12 px-4 border border-dashed border-border rounded-3xl bg-cream/30">
+                    <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-cream flex items-center justify-center text-warm-gray">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </div>
+                    <p className="font-serif text-lg text-charcoal mb-1">No Saved Addresses</p>
+                    <p className="text-xs text-warm-gray max-w-sm mx-auto mb-6">
+                      You haven't saved any delivery addresses yet. Add an address now to enjoy faster checkout.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddAddress}
+                      className="bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal/90 transition-colors"
+                    >
+                      + Add Address
+                    </button>
+                  </div>
+                )}
+
+                {!addressesLoading && addresses.length > 0 && (
+                  <div className="space-y-4">
+                    {addresses.map(addr => (
+                      <div
+                        key={addr.id}
+                        className="border border-border rounded-2xl p-5 hover:border-champagne/60 transition-colors bg-white"
+                      >
+                        <div className="flex flex-wrap justify-between items-start gap-2 mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <p className="font-medium text-sm text-charcoal">{addr.name}</p>
+                            {addr.is_default && (
+                              <span className="bg-cream text-gold text-xs px-2.5 py-0.5 rounded-full font-medium border border-gold/20">
+                                Default
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs">
+                            {!addr.is_default && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetDefaultAddress(addr.id)}
+                                disabled={addressActionId === addr.id}
+                                className="text-warm-gray hover:text-charcoal transition-colors underline-offset-4 hover:underline disabled:opacity-50"
+                              >
+                                Set as Default
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditAddress(addr)}
+                              disabled={addressActionId === addr.id}
+                              className="text-warm-gray hover:text-charcoal transition-colors underline-offset-4 hover:underline disabled:opacity-50"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAddress(addr.id)}
+                              disabled={addressActionId === addr.id}
+                              className="text-wine hover:text-red-700 transition-colors underline-offset-4 hover:underline disabled:opacity-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-sm text-warm-gray leading-relaxed">
+                          {addr.address_line}
+                          {addr.landmark && `, Near ${addr.landmark}`}
+                        </p>
+                        <p className="text-sm text-warm-gray mt-0.5">
+                          {addr.city}, {addr.state} - {addr.pin_code}
+                        </p>
+                        <p className="text-xs text-warm-gray mt-2 flex items-center gap-1.5">
+                          <span className="uppercase tracking-wider text-[10px] text-warm-gray/70">Phone:</span>
+                          <span className="text-charcoal font-medium">{addr.phone}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add / Edit Address Modal */}
+                {isAddressModalOpen && (
+                  <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-charcoal/60 p-3 sm:p-6 backdrop-blur-[2px]"
+                    onClick={() => !isSavingAddress && setIsAddressModalOpen(false)}
+                  >
+                    <section
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="address-modal-title"
+                      className="my-auto w-full max-w-lg overflow-hidden rounded-3xl border border-border bg-ivory shadow-[0_18px_50px_rgba(30,21,16,0.28)]"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="flex items-start justify-between gap-4 border-b border-border bg-white px-6 py-5">
+                        <div>
+                          <p className="text-[10px] tracking-[0.24em] uppercase text-gold">
+                            {editingAddress ? 'Update address' : 'New shipping address'}
+                          </p>
+                          <h2 id="address-modal-title" className="mt-1 font-serif text-2xl text-charcoal">
+                            {editingAddress ? 'Edit Address' : 'Add New Address'}
+                          </h2>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddressModalOpen(false)}
+                          disabled={isSavingAddress}
+                          className="rounded-full border border-border px-3.5 py-1.5 text-xs text-warm-gray transition hover:border-charcoal hover:text-charcoal disabled:opacity-50"
+                        >
+                          Close
+                        </button>
+                      </div>
+
+                      <form onSubmit={handleSaveAddress} className="p-6 space-y-4">
+                        {addressFormError && (
+                          <div role="alert" className="p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700">
+                            {addressFormError}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                              Full Name <span className="text-wine">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={addressForm.name}
+                              onChange={e => setAddressForm(f => ({ ...f, name: e.target.value }))}
+                              placeholder="e.g. Priya Sharma"
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                              Phone Number <span className="text-wine">*</span>
+                            </label>
+                            <input
+                              type="tel"
+                              required
+                              value={addressForm.phone}
+                              onChange={e => setAddressForm(f => ({ ...f, phone: e.target.value }))}
+                              placeholder="e.g. 9876543210"
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                            Address Line (House No, Building, Street) <span className="text-wine">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={addressForm.address_line}
+                            onChange={e => setAddressForm(f => ({ ...f, address_line: e.target.value }))}
+                            placeholder="e.g. 42, Anna Nagar West"
+                            className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                            Landmark <span className="text-warm-gray/60 font-normal">(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={addressForm.landmark}
+                            onChange={e => setAddressForm(f => ({ ...f, landmark: e.target.value }))}
+                            placeholder="e.g. Near Shanthi Colony Signal"
+                            className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                              City <span className="text-wine">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={addressForm.city}
+                              onChange={e => setAddressForm(f => ({ ...f, city: e.target.value }))}
+                              placeholder="e.g. Chennai"
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                              State <span className="text-wine">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={addressForm.state}
+                              onChange={e => setAddressForm(f => ({ ...f, state: e.target.value }))}
+                              placeholder="e.g. Tamil Nadu"
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">
+                              PIN Code <span className="text-wine">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={addressForm.pin_code}
+                              onChange={e => setAddressForm(f => ({ ...f, pin_code: e.target.value }))}
+                              placeholder="e.g. 600040"
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-white transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2.5 pt-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={addressForm.is_default}
+                            onChange={e => setAddressForm(f => ({ ...f, is_default: e.target.checked }))}
+                            className="w-4 h-4 rounded text-charcoal accent-charcoal focus:ring-champagne"
+                          />
+                          <span className="text-xs text-charcoal">Set as default address</span>
+                        </label>
+
+                        <div className="flex gap-3 pt-4 border-t border-border">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddressModalOpen(false)}
+                            disabled={isSavingAddress}
+                            className="border border-border text-warm-gray px-6 py-3 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:text-charcoal transition-all disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={isSavingAddress}
+                            className="flex-1 bg-charcoal text-champagne py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal/90 transition-colors disabled:opacity-60"
+                          >
+                            {isSavingAddress ? 'Saving Address...' : editingAddress ? 'Update Address' : 'Save Address'}
+                          </button>
+                        </div>
+                      </form>
+                    </section>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function AboutPage({ setPage }: { setPage: (p: Page) => void }) {
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="relative h-72 overflow-hidden bg-charcoal">
+        <img src="https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1600&h=600&fit=crop&auto=format" alt="About" className="absolute inset-0 w-full h-full object-cover opacity-50" />
+        <div className="relative h-full flex flex-col justify-center items-center text-center">
+          <p className="text-champagne text-xs tracking-widest uppercase mb-3">Our Story</p>
+          <h1 className="font-serif text-5xl text-white">About Us</h1>
+        </div>
+      </div>
+      <div className="max-w-3xl mx-auto px-6 py-16 text-center">
+        <p className="font-serif text-2xl text-charcoal leading-relaxed mb-8">
+          "Yaale was born from a deep love for India's textile heritage — every saree a story, every weave a legacy."
+        </p>
+        <p className="text-warm-gray font-light leading-relaxed mb-6">
+          Founded in Salem, we work directly with weavers from Tamil Nadu to bring you authentic, handcrafted sarees of uncompromising quality. Every piece in our collection is curated with care, ensuring that the age-old traditions of Indian weaving reach women across the country.
+        </p>
+        <p className="text-warm-gray font-light leading-relaxed mb-12">
+          We believe luxury isn't about price — it's about intentionality. Our sarees are made to be worn at moments that matter, cherished for generations, and passed on as heirlooms.
+        </p>
+        <button onClick={() => setPage('shop')}
+          className="bg-charcoal text-champagne px-10 py-4 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+          Shop Our Collection
+        </button>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function ContactPage({ setPage, storeSettings }: { setPage: (p: Page) => void, storeSettings: StoreSettingsForm }) {
+  const [form, setForm] = useState({ name: '', email: '', mobile: '', message: '' })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const submissionInProgress = useRef(false)
+  const contactAddress = storeSettings.store_address.trim() || CONTACT_ADDRESS
+  const contactEmail = storeSettings.store_email.trim() || DEFAULT_CONTACT_EMAIL
+  const contactPhone = storeSettings.store_phone.trim() || DEFAULT_CONTACT_PHONE
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submissionInProgress.current) return
+
+    submissionInProgress.current = true
+    setIsSubmitting(true)
+    setFeedback(null)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/contact-messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : ''
+        throw new Error(errors || data.message || 'Unable to send your message. Please try again.')
+      }
+
+      setForm({ name: '', email: '', mobile: '', message: '' })
+      setFeedback({ type: 'success', message: data.message || 'Your message has been sent successfully.' })
+    } catch (error) {
+      setFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Unable to send your message. Please try again.',
+      })
+    } finally {
+      submissionInProgress.current = false
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        <div className="text-center mb-14">
+          <p className="text-gold text-xs tracking-widest uppercase mb-3">Get in Touch</p>
+          <h1 className="font-serif text-5xl text-charcoal">Contact Us</h1>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          <div className="bg-white rounded-3xl border border-border p-8">
+            <h2 className="font-serif text-2xl text-charcoal mb-6">Send a Message</h2>
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              {[
+                { label: 'Your Name', name: 'name', type: 'text' },
+                { label: 'Email Address', name: 'email', type: 'email' },
+                { label: 'Mobile Number', name: 'mobile', type: 'tel' },
+              ].map(field => (
+                <div key={field.name}>
+                  <label htmlFor={`contact-${field.name}`} className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">{field.label}</label>
+                  <input
+                    id={`contact-${field.name}`}
+                    name={field.name}
+                    type={field.type}
+                    value={form[field.name as keyof typeof form]}
+                    onChange={event => setForm(current => ({ ...current, [field.name]: event.target.value }))}
+                    required
+                    autoComplete={field.name === 'name' ? 'name' : field.name === 'email' ? 'email' : 'tel'}
+                    pattern={field.name === 'mobile' ? '[+]?[1-9][0-9]{9,14}' : undefined}
+                    maxLength={field.name === 'mobile' ? 16 : undefined}
+                    className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors"
+                  />
+                </div>
+              ))}
+              <div>
+                <label htmlFor="contact-message" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Message</label>
+                <textarea
+                  id="contact-message"
+                  name="message"
+                  rows={4}
+                  value={form.message}
+                  onChange={event => setForm(current => ({ ...current, message: event.target.value }))}
+                  required
+                  className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent transition-colors resize-none"
+                />
+              </div>
+              {feedback && (
+                <p role={feedback.type === 'error' ? 'alert' : 'status'} className={`text-sm ${feedback.type === 'error' ? 'text-red-700' : 'text-green-700'}`}>
+                  {feedback.message}
+                </p>
+              )}
+              <button type="submit" disabled={isSubmitting} className="w-full bg-charcoal text-champagne py-3.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">
+                {isSubmitting ? 'Sending...' : 'Send Message'}
+              </button>
+            </form>
+          </div>
+          <div className="space-y-6">
+            <div className="bg-cream rounded-3xl p-8">
+              <h3 className="font-serif text-xl text-charcoal mb-4">Find Us</h3>
+              <div className="space-y-3 text-sm text-warm-gray font-light">
+                <p>📍 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(contactAddress)}`} target="_blank" rel="noreferrer" className="hover:underline">{contactAddress}</a></p>
+                <p>📞 {contactPhone}</p>
+                <p>✉ {contactEmail}</p>
+                <p>⏰ Mon–Sat: 10AM–7PM</p>
+              </div>
+            </div>
+            <div className="bg-cream rounded-3xl p-8">
+              <h3 className="font-serif text-xl text-charcoal mb-4">Follow Us</h3>
+              <div className="flex gap-3">
+                <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" className="bg-charcoal text-champagne px-5 py-2.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">Instagram</a>
+                <a href="https://wa.me/919150130613" target="_blank" rel="noreferrer" className="bg-[#25d366] text-white px-5 py-2.5 rounded-full text-xs tracking-widest uppercase hover:opacity-80 transition-opacity">WhatsApp</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <Footer setPage={setPage} />
+    </div>
+  )
+}
+
+function AdminLoginPage({ setPage, onLoginSuccess }: { setPage: (p: Page) => void, onLoginSuccess: (session: AdminAuthSession, rememberMe: boolean) => void }) {
+  const [email, setEmail] = useState(() => localStorage.getItem('yaale_admin_remembered_email') ?? '')
+  const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('yaale_admin_remembered_email'))
+  const [loginError, setLoginError] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+
+  const login = async () => {
+    setLoginLoading(true)
+    setLoginError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors ? Object.values(data.errors as Record<string, string[]>).flat().join('\n') : ''
+        setLoginError(errors || data.message || 'Unable to sign in.')
+        return
+      }
+
+      if (rememberMe) {
+        localStorage.setItem('yaale_admin_remembered_email', email)
+      } else {
+        localStorage.removeItem('yaale_admin_remembered_email')
+      }
+
+      onLoginSuccess(data as AdminAuthSession, rememberMe)
+    } catch (error) {
+      console.error('Admin sign-in error:', error)
+      setLoginError('Unable to reach the admin service.')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-charcoal flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-10">
+          <p className="font-serif text-3xl text-champagne">Yaale</p>
+          <p className="text-warm-gray text-xs tracking-widest uppercase mt-2">Admin Portal</p>
+        </div>
+        <div className="bg-charcoal rounded-3xl border border-[#4a3a32] p-8">
+          <h1 className="font-serif text-2xl text-white mb-6">Sign In</h1>
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                className="w-full bg-charcoal border border-[#4a3a32] rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-champagne transition-colors" />
+            </div>
+            <div>
+              <label className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                className="w-full bg-charcoal border border-[#4a3a32] rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-champagne transition-colors" />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-warm-gray cursor-pointer select-none">
+              <input
+                type="checkbox"
+                id="admin-remember-me"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+                className="w-4 h-4 accent-champagne cursor-pointer"
+              />
+              Remember me
+            </label>
+          </div>
+          {loginError && <p role="alert" className="mt-4 whitespace-pre-line text-sm text-[#f3a3a3]">{loginError}</p>}
+          <button onClick={login} disabled={loginLoading || !email || !password}
+            className="w-full mt-6 bg-champagne text-charcoal py-3.5 rounded-full text-xs tracking-widest uppercase font-semibold hover:bg-charcoal hover:text-champagne transition-colors disabled:opacity-50">
+            {loginLoading ? 'Signing In...' : 'Login'}
+          </button>
+        </div>
+        <button onClick={() => setPage('home')} className="w-full text-center mt-6 text-xs text-warm-gray hover:text-champagne tracking-wider uppercase">
+          ← Back to Store
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function AdminDashboardPage({ setPage, adminSession, onLogout, globalStoreSettings, setGlobalStoreSettings }: { setPage: (p: Page) => void, adminSession: AdminAuthSession | null, onLogout: () => void, globalStoreSettings: StoreSettingsForm, setGlobalStoreSettings: (settings: StoreSettingsForm) => void }) {
+  const { products, setProducts, productsLoading, productsError, refreshProducts, videos, setVideos, videosLoading, videosError, setVideosError } = useProductsStore()
+  const [tab, setTab] = useState('Dashboard')
+  const [editingProduct, setEditingProduct] = useState<(Product & {
+  imageFile?: File | null
+}) | null>(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [orders, setOrders] = useState<any[]>([])
+const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersError, setOrdersError] = useState('')
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [orderStatusNotes, setOrderStatusNotes] = useState<Record<number, string>>({})
+  const [orderStatusSavingId, setOrderStatusSavingId] = useState<number | null>(null)
+  const [orderStatusErrors, setOrderStatusErrors] = useState<Record<number, string>>({})
+  const [categories, setCategories] = useState<AdminCategory[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [categoriesError, setCategoriesError] = useState('')
+  const [customers, setCustomers] = useState<AdminCustomer[]>([])
+  const [customersLoading, setCustomersLoading] = useState(true)
+  const [customersError, setCustomersError] = useState('')
+  const [offers, setOffers] = useState<AdminOffer[]>([])
+  const [offersLoading, setOffersLoading] = useState(true)
+  const [offersError, setOffersError] = useState('')
+  const [offerDialog, setOfferDialog] = useState<'add' | 'edit' | 'delete' | null>(null)
+  const [selectedOffer, setSelectedOffer] = useState<AdminOffer | null>(null)
+  const [offerForm, setOfferForm] = useState<OfferForm>({ title: '', type: 'Discount', value: '', description: '', status: 'Active' })
+  const [offerActionError, setOfferActionError] = useState('')
+  const [offerActionLoading, setOfferActionLoading] = useState(false)
+  const [storeSettings, setStoreSettings] = useState<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
+  const [savedStoreSettings, setSavedStoreSettings] = useState<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
+  const [storeSettingsLoading, setStoreSettingsLoading] = useState(false)
+  const [storeSettingsSaving, setStoreSettingsSaving] = useState(false)
+  const [storeSettingsError, setStoreSettingsError] = useState('')
+  const [storeSettingsMessage, setStoreSettingsMessage] = useState('')
+  const [inboxMessages, setInboxMessages] = useState<Array<{ id: number; name: string; email: string; mobile: string; message: string; is_read: boolean; created_at: string | null }>>([])
+  const [selectedInboxMessage, setSelectedInboxMessage] = useState<Array<{ id: number; name: string; email: string; mobile: string; message: string; is_read: boolean; created_at: string | null }>[number] | null>(null)
+  const [inboxLoading, setInboxLoading] = useState(false)
+  const [inboxError, setInboxError] = useState('')
+  const [inventoryStockDrafts, setInventoryStockDrafts] = useState<Record<number, string>>({})
+  const [inventoryErrors, setInventoryErrors] = useState<Record<number, string>>({})
+  const [inventorySavingId, setInventorySavingId] = useState<number | null>(null)
+  const [categoryDialog, setCategoryDialog] = useState<'add' | 'edit' | 'delete' | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState<AdminCategory | null>(null)
+  const [categoryForm, setCategoryForm] = useState({ name: '', description: '' })
+  const [categoryActionError, setCategoryActionError] = useState('')
+  const [categoryActionLoading, setCategoryActionLoading] = useState(false)
+  const [dashboardStats, setDashboardStats] = useState<AdminDashboardStats | null>(null)
+  const [dashboardStatsLoading, setDashboardStatsLoading] = useState(true)
+  const [dashboardStatsError, setDashboardStatsError] = useState('')
+
+  const loadDashboardStats = async () => {
+    if (!adminSession?.token) {
+      setDashboardStats(null)
+      setDashboardStatsLoading(false)
+      return
+    }
+
+    setDashboardStatsLoading(true)
+    setDashboardStatsError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/admin/dashboard', {
+        headers: {
+          Authorization: `Bearer ${adminSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Failed to load dashboard stats')
+      setDashboardStats(data as AdminDashboardStats)
+    } catch (err) {
+      console.warn('Dashboard stats error:', err)
+      setDashboardStatsError(err instanceof Error ? err.message : 'Failed to load stats')
+    } finally {
+      setDashboardStatsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadDashboardStats()
+  }, [adminSession?.token])
+
+  useEffect(() => {
+    if (tab === 'Dashboard') {
+      void loadDashboardStats()
+    }
+  }, [tab])
+
+  useEffect(() => {
+    if (!selectedOrder) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedOrder(null)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedOrder])
+
+  useEffect(() => {
+    if (!categoryDialog || categoryActionLoading) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCategoryDialog(null)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [categoryDialog, categoryActionLoading])
+
+useEffect(() => {
+    if (!adminSession) {
+      setOrders([])
+      setOrdersError('')
+      setOrdersLoading(false)
+      return
+    }
+
+    const fetchOrders = async () => {
+      setOrdersLoading(true)
+      setOrdersError('')
+
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/orders', {
+          headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
+        })
+
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to fetch orders')
+        }
+
+        if (!Array.isArray(data)) throw new Error('The orders response was invalid.')
+        setOrders(data)
+      } catch (error) {
+        console.error('FETCH ORDERS ERROR:', error)
+        setOrdersError(error instanceof Error ? error.message : 'Failed to load orders.')
+      } finally {
+        setOrdersLoading(false)
+      }
+    }
+
+    fetchOrders()
+  }, [adminSession?.token])
+
+  const updateOrderStatus = async (order: any, status: string) => {
+    setOrderStatusSavingId(order.id)
+    setOrderStatusErrors(current => ({ ...current, [order.id]: '' }))
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+        },
+        body: JSON.stringify({ status, note: orderStatusNotes[order.id] || null }),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const errors = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : ''
+        throw new Error(errors || data.message || 'Failed to update order status.')
+      }
+
+      setOrders(current => current.map(currentOrder => currentOrder.id === order.id
+        ? { ...currentOrder, ...data }
+        : currentOrder))
+      setSelectedOrder((current: any) => current?.id === order.id ? { ...current, ...data } : current)
+      setOrderStatusNotes(current => ({ ...current, [order.id]: '' }))
+      void loadDashboardStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update order status.'
+      setOrderStatusErrors(current => ({ ...current, [order.id]: message }))
+    } finally {
+      setOrderStatusSavingId(null)
+    }
+  }
+
+
+  const [newSaree, setNewSaree] = useState({
+    name: 'Mysore Silk Elegance', sku: 'SS-010', category: 'Soft Silk', price: '18500',
+    discount: '10', fabric: 'Pure Silk', color: 'Rose Gold', length: '5.5m',
+    blouse: 'Yes', occasion: 'Wedding', stock: '12',
+    description: 'Handwoven saree crafted with a regal sheen, delicate zari detailing and rich festive elegance.',
+    returnExchange: 'Returns and exchanges are accepted within 7 days of delivery for unused items with original packaging.',
+    manufacturedBy: 'Yaale Artisans, Chennai',
+    marketedBy: 'Yaale, Chennai',
+    images: [] as string[],
+imageFiles: [] as File[],
+  })
+  const [newVideo, setNewVideo] = useState({ title: 'Festive Edit', videoFile: null as File | null })
+  const [videoUploading, setVideoUploading] = useState(false)
+  const [deletingVideoId, setDeletingVideoId] = useState<number | null>(null)
+  const videoInputRef = useRef<HTMLInputElement>(null)
+  const sidebarItems = ['Dashboard', 'Sarees', 'Categories', 'Inventory', 'Orders', 'Customers', 'Offers', 'Settings', 'Inbox']
+
+  const totalSalesAmount = orders.reduce((sum, o) => {
+    if (o.status === 'Cancelled') return sum
+    const amt = Number(o.amount ?? o.total_amount ?? 0)
+    return sum + (Number.isFinite(amt) ? amt : 0)
+  }, 0)
+
+  const pendingOrdersCount = orders.filter(o => o.status === 'Pending').length
+  const lowStockCount = products.filter(p => (p.stock ?? 0) <= 5).length
+
+  const stats = [
+    {
+      label: 'Total Sarees',
+      value: String(dashboardStats?.total_sarees?.count ?? products.length),
+      change: dashboardStats?.total_sarees?.change ?? (products.length > 0 ? `+${products.length} in collection` : '0 this month'),
+      color: 'text-champagne',
+    },
+    {
+      label: 'Total Orders',
+      value: String(dashboardStats?.total_orders?.count ?? orders.length),
+      change: dashboardStats?.total_orders?.change ?? (orders.length > 0 ? `+${orders.length} total` : '0 this week'),
+      color: 'text-wine',
+    },
+    {
+      label: 'Total Sales',
+      value: dashboardStats?.total_sales?.formatted ?? (totalSalesAmount >= 100000 ? `₹${(totalSalesAmount / 100000).toFixed(1)}L` : `₹${totalSalesAmount.toLocaleString('en-IN')}`),
+      change: dashboardStats?.total_sales?.change ?? (totalSalesAmount > 0 ? `₹${totalSalesAmount.toLocaleString('en-IN')} total` : '₹0 this month'),
+      color: 'text-gold',
+    },
+    {
+      label: 'Pending Orders',
+      value: String(dashboardStats?.pending_orders?.count ?? pendingOrdersCount),
+      change: dashboardStats?.pending_orders?.change ?? (pendingOrdersCount > 0 ? `${pendingOrdersCount} pending` : 'All fulfilled'),
+      color: 'text-warm-gray',
+    },
+    {
+      label: 'Low Stock',
+      value: String(dashboardStats?.low_stock?.count ?? lowStockCount),
+      change: dashboardStats?.low_stock?.change ?? (lowStockCount > 0 ? `${lowStockCount} items low` : 'Stock healthy'),
+      color: 'text-wine',
+    },
+    {
+      label: 'Customers',
+      value: String(dashboardStats?.customers?.count ?? customers.length),
+      change: dashboardStats?.customers?.change ?? (customers.length > 0 ? `+${customers.length} total` : '0 new'),
+      color: 'text-gold',
+    },
+  ]
+
+ 
+
+  const statusColor: Record<string, string> = {
+    Shipped: 'bg-blue-50 text-blue-700', Packed: 'bg-amber-50 text-amber-700',
+    Confirmed: 'bg-green-50 text-green-700', Pending: 'bg-orange-50 text-orange-700',
+    Delivered: 'bg-emerald-50 text-emerald-700', Cancelled: 'bg-red-50 text-red-700',
+  }
+
+  const loadCategories = async () => {
+    setCategoriesLoading(true)
+    setCategoriesError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/categories')
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to load categories')
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error('The categories response was invalid')
+      }
+
+      setCategories(data)
+    } catch (error) {
+      console.error('Error fetching categories:', error)
+      setCategoriesError(error instanceof Error ? error.message : 'Failed to load categories')
+    } finally {
+      setCategoriesLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadCategories()
+  }, [])
+
+  const loadOffers = async () => {
+    setOffersLoading(true)
+    setOffersError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/offers')
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) throw new Error(data.message || 'Failed to load offers')
+      if (!Array.isArray(data)) throw new Error('The offers response was invalid')
+
+      setOffers(data)
+    } catch (error) {
+      console.error('Error fetching offers:', error)
+      setOffersError(error instanceof Error ? error.message : 'Failed to load offers')
+    } finally {
+      setOffersLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadOffers()
+  }, [])
+
+  useEffect(() => {
+    const loadCustomers = async () => {
+      if (!adminSession) {
+        setCustomers([])
+        setCustomersLoading(false)
+        return
+      }
+
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/customers', {
+          headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
+        })
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to load customers')
+        }
+
+        if (!Array.isArray(data)) {
+          throw new Error('The customers response was invalid')
+        }
+
+        setCustomers(data)
+      } catch (error) {
+        console.error('Error fetching customers:', error)
+        setCustomersError(error instanceof Error ? error.message : 'Failed to load customers')
+      } finally {
+        setCustomersLoading(false)
+      }
+    }
+
+    void loadCustomers()
+  }, [adminSession?.token])
+
+  const loadStoreSettings = async () => {
+    if (!adminSession) {
+      setStoreSettingsError('Sign in with an administrator account to manage settings.')
+      setStoreSettingsLoading(false)
+      return
+    }
+
+    setStoreSettingsLoading(true)
+    setStoreSettingsError('')
+    setStoreSettingsMessage('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+        headers: { 'Authorization': `Bearer ${adminSession.token}`, 'Accept': 'application/json' },
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) throw new Error(data.message || 'Unable to load store settings.')
+
+      const settings = storeSettingsFromApi(data)
+      setStoreSettings(settings)
+      setSavedStoreSettings(settings)
+      setGlobalStoreSettings(settings)
+    } catch (error) {
+      console.error('Error loading store settings:', error)
+      setStoreSettingsError(error instanceof Error ? error.message : 'Unable to load store settings.')
+    } finally {
+      setStoreSettingsLoading(false)
+    }
+  }
+
+  const loadInboxMessages = async () => {
+    if (!adminSession) {
+      setInboxError('Sign in with an administrator account to view messages.')
+      return
+    }
+
+    setInboxLoading(true)
+    setInboxError('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/contact-messages', {
+        headers: {
+          'Authorization': `Bearer ${adminSession.token}`,
+          'Accept': 'application/json',
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to load messages.')
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error('The inbox response was invalid.')
+      }
+
+      setInboxMessages(data.map((message: any) => ({
+        id: Number(message.id),
+        name: String(message.name ?? ''),
+        email: String(message.email ?? ''),
+        mobile: String(message.mobile ?? ''),
+        message: String(message.message ?? ''),
+        is_read: Boolean(message.is_read),
+        created_at: typeof message.created_at === 'string' ? message.created_at : null,
+      })))
+    } catch (error) {
+      console.error('Error loading inbox messages:', error)
+      setInboxError(error instanceof Error ? error.message : 'Unable to load messages.')
+    } finally {
+      setInboxLoading(false)
+    }
+  }
+
+  const markMessageAsRead = async (messageId: number) => {
+    if (!adminSession) return
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/contact-messages/${messageId}/read`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${adminSession.token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to update message status.')
+      }
+
+      setInboxMessages(current => current.map(message =>
+        message.id === messageId ? { ...message, is_read: true } : message,
+      ))
+    } catch (error) {
+      console.error('Error marking message as read:', error)
+      setInboxError(error instanceof Error ? error.message : 'Unable to update message status.')
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'Settings') void loadStoreSettings()
+  }, [tab, adminSession?.token])
+
+  useEffect(() => {
+    if (tab === 'Inbox') void loadInboxMessages()
+  }, [tab, adminSession?.token])
+
+  const cancelStoreSettings = () => {
+    setStoreSettings(savedStoreSettings)
+    setStoreSettingsError('')
+    setStoreSettingsMessage('')
+  }
+
+  const saveStoreSettings = async () => {
+    if (!adminSession) {
+      setStoreSettingsError('Sign in with an administrator account to save settings.')
+      return
+    }
+
+    const shippingFee = storeSettings.shipping_fee.trim() === '' ? null : Number(storeSettings.shipping_fee)
+    const freeShippingThreshold = storeSettings.free_shipping_threshold.trim() === '' ? null : Number(storeSettings.free_shipping_threshold)
+    if ((shippingFee !== null && (!Number.isFinite(shippingFee) || shippingFee < 0)) ||
+        (freeShippingThreshold !== null && (!Number.isFinite(freeShippingThreshold) || freeShippingThreshold < 0))) {
+      setStoreSettingsError('Shipping amounts must be valid numbers of 0 or more.')
+      setStoreSettingsMessage('')
+      return
+    }
+
+    setStoreSettingsSaving(true)
+    setStoreSettingsError('')
+    setStoreSettingsMessage('')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${adminSession.token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          ...storeSettings,
+          shipping_fee: shippingFee,
+          free_shipping_threshold: freeShippingThreshold,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const validationErrors = data.errors ? Object.values(data.errors as Record<string, string[]>).flat().join('\n') : ''
+        throw new Error(validationErrors || data.message || 'Unable to save store settings.')
+      }
+
+      const saved = storeSettingsFromApi(data)
+      setStoreSettings(saved)
+      setSavedStoreSettings(saved)
+      setGlobalStoreSettings(saved)
+      setStoreSettingsMessage('Settings saved successfully.')
+    } catch (error) {
+      console.error('Error saving store settings:', error)
+      setStoreSettingsError(error instanceof Error ? error.message : 'Unable to save store settings.')
+    } finally {
+      setStoreSettingsSaving(false)
+    }
+  }
+
+  const settingsActionButtons = () => (
+    <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-5">
+      <button type="button" onClick={cancelStoreSettings} disabled={storeSettingsSaving || storeSettingsLoading} className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal disabled:opacity-40">Cancel</button>
+      <button type="button" onClick={saveStoreSettings} disabled={storeSettingsSaving || storeSettingsLoading || !adminSession} className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal disabled:cursor-not-allowed disabled:opacity-40">{storeSettingsSaving ? 'Saving...' : 'Save Changes'}</button>
+    </div>
+  )
+
+  const categoryApiError = (data: { message?: string; errors?: Record<string, string[]> }, fallback: string) =>
+    data.errors
+      ? Object.values(data.errors).flat().join('\n')
+      : data.message || fallback
+
+  const addCategory = async () => {
+    setSelectedCategory(null)
+    setCategoryForm({ name: '', description: '' })
+    setCategoryActionError('')
+    setCategoryDialog('add')
+  }
+
+  const editCategory = async (category: AdminCategory) => {
+    setSelectedCategory(category)
+    setCategoryForm({ name: category.name, description: category.description })
+    setCategoryActionError('')
+    setCategoryDialog('edit')
+  }
+
+  const deleteCategory = async (category: AdminCategory) => {
+    setSelectedCategory(category)
+    setCategoryActionError('')
+    setCategoryDialog('delete')
+  }
+
+  const saveCategory = async () => {
+    if (!categoryForm.name.trim() || !categoryForm.description.trim()) {
+      setCategoryActionError('Category name and description are required.')
+      return
+    }
+
+    setCategoryActionLoading(true)
+    setCategoryActionError('')
+
+    try {
+      const isEditing = categoryDialog === 'edit' && selectedCategory
+      const response = await fetch(
+        isEditing
+          ? `http://127.0.0.1:8000/api/categories/${selectedCategory.id}`
+          : 'http://127.0.0.1:8000/api/categories',
+        {
+          method: isEditing ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: categoryForm.name,
+            description: categoryForm.description,
+          }),
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        setCategoryActionError(categoryApiError(data, isEditing ? 'Failed to update category' : 'Failed to add category'))
+        return
+      }
+
+      setCategoryDialog(null)
+      setSelectedCategory(null)
+      await loadCategories()
+    } catch (error) {
+      console.error('Error saving category:', error)
+      setCategoryActionError('Something went wrong while saving the category')
+    } finally {
+      setCategoryActionLoading(false)
+    }
+  }
+
+  const confirmDeleteCategory = async () => {
+    if (!selectedCategory) return
+
+    setCategoryActionLoading(true)
+    setCategoryActionError('')
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/categories/${selectedCategory.id}`, {
+        method: 'DELETE',
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        setCategoryActionError(categoryApiError(data, 'Failed to delete category'))
+        return
+      }
+
+      setCategoryDialog(null)
+      setSelectedCategory(null)
+      await loadCategories()
+    } catch (error) {
+      console.error('Error deleting category:', error)
+      setCategoryActionError('Something went wrong while deleting the category')
+    } finally {
+      setCategoryActionLoading(false)
+    }
+  }
+
+  const offerApiError = (data: { message?: string; errors?: Record<string, string[]> }, fallback: string) =>
+    data.errors ? Object.values(data.errors).flat().join('\n') : data.message || fallback
+
+  const openAddOffer = () => {
+    setSelectedOffer(null)
+    setOfferForm({ title: '', type: 'Discount', value: '', description: '', status: 'Active' })
+    setOfferActionError('')
+    setOfferDialog('add')
+  }
+
+  const openEditOffer = (offer: AdminOffer) => {
+    setSelectedOffer(offer)
+    setOfferForm({ title: offer.title, type: offer.type, value: offer.value, description: offer.description, status: offer.status })
+    setOfferActionError('')
+    setOfferDialog('edit')
+  }
+
+  const openDeleteOffer = (offer: AdminOffer) => {
+    setSelectedOffer(offer)
+    setOfferActionError('')
+    setOfferDialog('delete')
+  }
+
+  const saveOffer = async () => {
+    if (!offerForm.title.trim() || !offerForm.value.trim() || !offerForm.description.trim()) {
+      setOfferActionError('Title, offer value or code, and description are required.')
+      return
+    }
+
+    setOfferActionLoading(true)
+    setOfferActionError('')
+
+    try {
+      const editing = offerDialog === 'edit' && selectedOffer
+      const response = await fetch(
+        editing ? `http://127.0.0.1:8000/api/offers/${selectedOffer.id}` : 'http://127.0.0.1:8000/api/offers',
+        {
+          method: editing ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(offerForm),
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        setOfferActionError(offerApiError(data, editing ? 'Failed to update offer' : 'Failed to add offer'))
+        return
+      }
+
+      setOfferDialog(null)
+      setSelectedOffer(null)
+      await loadOffers()
+    } catch (error) {
+      console.error('Error saving offer:', error)
+      setOfferActionError('Something went wrong while saving the offer')
+    } finally {
+      setOfferActionLoading(false)
+    }
+  }
+
+  const confirmDeleteOffer = async () => {
+    if (!selectedOffer) return
+
+    setOfferActionLoading(true)
+    setOfferActionError('')
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/offers/${selectedOffer.id}`, { method: 'DELETE' })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        setOfferActionError(offerApiError(data, 'Failed to delete offer'))
+        return
+      }
+
+      setOfferDialog(null)
+      setSelectedOffer(null)
+      await loadOffers()
+    } catch (error) {
+      console.error('Error deleting offer:', error)
+      setOfferActionError('Something went wrong while deleting the offer')
+    } finally {
+      setOfferActionLoading(false)
+    }
+  }
+
+  const saveInventoryStock = async (product: Product, rawStock: string) => {
+    const trimmedStock = rawStock.trim()
+    const stock = Number(trimmedStock)
+
+    if (!trimmedStock || !Number.isInteger(stock) || stock < 0) {
+      setInventoryErrors(current => ({ ...current, [product.id]: 'Enter a whole number of 0 or more.' }))
+      return
+    }
+
+    if (stock === (product.stock ?? 0)) {
+      setInventoryErrors(current => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+      setInventoryStockDrafts(current => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+      return
+    }
+
+    setInventorySavingId(product.id)
+    setInventoryErrors(current => {
+      const next = { ...current }
+      delete next[product.id]
+      return next
+    })
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/products/${product.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ stock, in_stock: stock > 0 }),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const validationMessage = data.errors
+          ? Object.values(data.errors as Record<string, string[]>).flat().join(' ')
+          : data.message || 'Failed to update stock.'
+        setInventoryErrors(current => ({ ...current, [product.id]: validationMessage }))
+        return
+      }
+
+      await refreshProducts()
+      setInventoryStockDrafts(current => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+    } catch (error) {
+      console.error('Error updating inventory stock:', error)
+      setInventoryErrors(current => ({
+        ...current,
+        [product.id]: error instanceof Error ? error.message : 'Something went wrong while updating stock.',
+      }))
+    } finally {
+      setInventorySavingId(null)
+    }
+  }
+
+   const updateSareeField = (
+  field: keyof typeof newSaree,
+  value: string | File | string[] | File[] | null
+) => {
+  setNewSaree(prev => ({
+    ...prev,
+    [field]: value,
+  }))
+}
+
+  const handleSareePhotos = (files: FileList | null) => {
+  if (!files || files.length === 0) return
+
+  const selectedFiles = Array.from(files)
+
+  updateSareeField('imageFiles', selectedFiles)
+
+  selectedFiles.forEach(file => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      setNewSaree(prev => ({
+        ...prev,
+        images: [...prev.images, String(reader.result)],
+      }))
+    }
+
+    reader.readAsDataURL(file)
+  })
+}
+
+
+  const handleEditorialVideo = (file: File | undefined) => {
+    if (!file) return
+    setNewVideo(current => ({ ...current, videoFile: file }))
+  }
+
+  const saveEditorialVideo = async () => {
+    if (!newVideo.videoFile || videoUploading) return
+
+    setVideoUploading(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('title', newVideo.title || 'Festive Edit')
+      formData.append('video', newVideo.videoFile)
+
+      const response = await fetch('http://127.0.0.1:8000/api/videos', {
+        method: 'POST',
+        body: formData,
+      })
+      const responseData = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        if (response.status === 413) {
+          alert(responseData.message || 'The video file is too large for the server. Maximum supported size is 1GB.')
+          return
+        }
+        const validationErrors = responseData.errors
+          ? Object.entries(responseData.errors as Record<string, string[]>).map(([field, messages]) =>
+              `${field}: ${Array.isArray(messages) ? messages.join(', ') : String(messages)}`
+            ).join('\n')
+          : ''
+        alert(validationErrors || responseData.message || 'Failed to upload video')
+        return
+      }
+
+      const storageUrl = (path: string | null) => path
+        ? path.startsWith('http')
+          ? path
+          : `http://127.0.0.1:8000/storage/${path.replace(/^\/+/, '')}`
+        : ''
+
+      setVideos(current => [...current, {
+        id: responseData.id,
+        title: responseData.title,
+        src: storageUrl(responseData.video),
+        poster: storageUrl(responseData.poster) || products[0]?.image || '',
+      }])
+      setVideosError('')
+      setNewVideo({ title: 'Festive Edit', videoFile: null })
+      if (videoInputRef.current) videoInputRef.current.value = ''
+      setSuccessMessage('Video uploaded successfully!')
+      setTimeout(() => setSuccessMessage(''), 3000)
+    } catch (error) {
+      console.error('Error uploading video:', error)
+      alert('Something went wrong while uploading the video')
+    } finally {
+      setVideoUploading(false)
+    }
+  }
+
+  const deleteEditorialVideo = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this video?')) return
+
+    setDeletingVideoId(id)
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/videos/${id}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        alert(errorData.message || 'Failed to delete video')
+        return
+      }
+
+      setVideos(current => current.filter(video => video.id !== id))
+      setVideosError('')
+      setSuccessMessage('Video deleted successfully!')
+      setTimeout(() => setSuccessMessage(''), 3000)
+    } catch (error) {
+      console.error('Error deleting video:', error)
+      alert('Something went wrong while deleting the video')
+    } finally {
+      setDeletingVideoId(null)
+    }
+  }
+
+  const saveSaree = async () => {
+  const originalPrice =
+    Number(newSaree.price.replace(/[^0-9.]/g, '')) || 0
+
+  const discount =
+    Number(newSaree.discount.replace(/[^0-9.]/g, '')) || 0
+
+  const stock =
+    Number(newSaree.stock.replace(/[^0-9]/g, '')) || 0
+
+  if (!newSaree.name || !originalPrice || !newSaree.category) {
+    alert('Please fill the required fields')
+    return
+  }
+
+  try {
+    const response = await fetch(
+      'http://127.0.0.1:8000/api/products',
+      {
+        method: 'POST',
+       body: (() => {
+  const formData = new FormData()
+
+  formData.append('name', newSaree.name)
+  formData.append('description', newSaree.description || '')
+
+  formData.append('original_price', String(originalPrice))
+  formData.append('discount', String(discount))
+
+  formData.append('category', newSaree.category)
+  formData.append('badge', 'NEW')
+  formData.append('fabric', newSaree.fabric || '')
+  formData.append('color', newSaree.color || '')
+  formData.append('length', newSaree.length)
+formData.append('blouse', newSaree.blouse)
+formData.append('occasion', newSaree.occasion)
+  formData.append('sku', newSaree.sku || '')
+
+  formData.append('stock', String(stock))
+  formData.append('in_stock', stock > 0 ? '1' : '0')
+  formData.append('is_active', '1')
+
+  formData.append(
+    'return_exchange',
+    newSaree.returnExchange || ''
+  )
+
+  formData.append(
+    'manufactured_by',
+    newSaree.manufacturedBy || ''
+  )
+
+  formData.append(
+    'marketed_by',
+    newSaree.marketedBy || ''
+  )
+
+    if (newSaree.imageFiles.length > 0) {
+  newSaree.imageFiles.forEach((file) => {
+    formData.append('images[]', file)
+  })
+}
+
+  return formData
+})(),
+      }
+    )
+
+   if (!response.ok) {
+  const errorData = await response.json()
+  console.error('SAVE SAREE ERROR:', errorData)
+
+  alert(
+    errorData.errors
+      ? JSON.stringify(errorData.errors, null, 2)
+      : errorData.message || 'Failed to save saree'
+  )
+
+  return
+}
+
+ 
+
+    const createdProduct = await response.json()
+
+    const mappedProduct: Product = {
+      id: createdProduct.id,
+      name: createdProduct.name,
+      category: createdProduct.category,
+      price: Number(createdProduct.price),
+
+      originalPrice:
+        createdProduct.original_price !== null
+          ? Number(createdProduct.original_price)
+          : undefined,
+
+      image: productImageUrl(createdProduct.image),
+      images: Array.isArray(createdProduct.images)
+  ? createdProduct.images
+      .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
+      .filter(Boolean)
+  : [],
+      badge: createdProduct.badge ?? undefined,
+      fabric: createdProduct.fabric ?? '',
+      color: createdProduct.color ?? '',
+      sku: createdProduct.sku ?? '',
+      length: createdProduct.length ?? '',
+blouse: createdProduct.blouse ?? '',
+occasion: createdProduct.occasion ?? '',
+      inStock: Boolean(createdProduct.in_stock),
+
+      description: createdProduct.description ?? undefined,
+      returnExchange: createdProduct.return_exchange ?? undefined,
+      manufacturedBy: createdProduct.manufactured_by ?? undefined,
+      marketedBy: createdProduct.marketed_by ?? undefined,
+    }
+
+    setProducts(current => [...current, mappedProduct])
+    setShowAddForm(false)
+
+    setSuccessMessage('Saree added successfully!')
+
+setTimeout(() => {
+  setSuccessMessage('')
+}, 3000)
+  } catch (error) {
+    console.error('Error saving saree:', error)
+    alert('Something went wrong while saving the saree')
+  }
+}
+
+const deleteSaree = async (id: number) => {
+  if (!window.confirm('Are you sure you want to delete this saree?')) {
+    return
+  }
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:8000/api/products/${id}`,
+      {
+        method: 'DELETE',
+      }
+    )
+
+    if (!response.ok) {
+      alert('Failed to delete saree')
+      return
+    }
+
+    setProducts(current =>
+      current.filter(product => product.id !== id)
+    )
+
+    setSuccessMessage('Saree deleted successfully!')
+
+    setTimeout(() => {
+      setSuccessMessage('')
+    }, 3000)
+
+  } catch (error) {
+    console.error('Error deleting saree:', error)
+    alert('Something went wrong while deleting the saree')
+  }
+}
+
+const editSaree = (product: Product) => {
+  setEditingProduct(product)
+}
+
+const updateSaree = async () => {
+  if (!editingProduct) return
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:8000/api/products/${editingProduct.id}`,
+      {
+        method: 'POST',
+       body: (() => {
+  const formData = new FormData()
+
+  formData.append('name', editingProduct.name)
+  formData.append('sku', editingProduct.sku)
+  formData.append('category', editingProduct.category)
+  formData.append(
+    'original_price',
+    String(editingProduct.originalPrice ?? 0)
+  )
+  formData.append(
+    'discount',
+    String(editingProduct.discount ?? 0)
+  )
+  formData.append(
+    'stock',
+    String(editingProduct.stock ?? 0)
+  )
+  formData.append('fabric', editingProduct.fabric)
+  formData.append('length', editingProduct.length ?? '')
+formData.append('blouse', editingProduct.blouse ?? '')
+formData.append('occasion', editingProduct.occasion ?? '')
+  formData.append('color', editingProduct.color)
+  formData.append(
+    'description',
+    editingProduct.description ?? ''
+  )
+  formData.append(
+    'return_exchange',
+    editingProduct.returnExchange ?? ''
+  )
+  formData.append(
+    'manufactured_by',
+    editingProduct.manufacturedBy ?? ''
+  )
+  formData.append(
+    'marketed_by',
+    editingProduct.marketedBy ?? ''
+  )
+
+  if (editingProduct.imageFile) {
+    formData.append('image', editingProduct.imageFile)
+  }
+
+  formData.append('_method', 'PUT')
+
+  return formData
+})(),
+      }
+    )
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      console.error(errorData)
+      alert('Failed to update saree')
+      return
+    }
+
+    const updatedProduct = await response.json()
+
+    setProducts(current =>
+  current.map(product =>
+    product.id === updatedProduct.id
+      ? {
+          ...product,
+          name: updatedProduct.name,
+          sku: updatedProduct.sku,
+          category: updatedProduct.category,
+          price: Number(updatedProduct.price),
+          originalPrice:
+            updatedProduct.original_price !== null
+              ? Number(updatedProduct.original_price)
+              : undefined,
+          discount:
+            updatedProduct.discount !== null
+              ? Number(updatedProduct.discount)
+              : 0,
+          stock: Number(updatedProduct.stock) || 0,
+          fabric: updatedProduct.fabric ?? '',
+          color: updatedProduct.color ?? '',
+          length: updatedProduct.length ?? '',
+blouse: updatedProduct.blouse ?? '',
+occasion: updatedProduct.occasion ?? '',
+          description: updatedProduct.description ?? undefined,
+          returnExchange: updatedProduct.return_exchange ?? undefined,
+          manufacturedBy: updatedProduct.manufactured_by ?? undefined,
+          marketedBy: updatedProduct.marketed_by ?? undefined,
+          inStock: Boolean(updatedProduct.in_stock),
+        }
+      : product
+  )
+)
+
+    setEditingProduct(null)
+
+    setSuccessMessage('Saree updated successfully!')
+
+    setTimeout(() => {
+      setSuccessMessage('')
+    }, 3000)
+
+  } catch (error) {
+    console.error('Error updating saree:', error)
+    alert('Something went wrong while updating the saree')
+  }
+}
+
+  return (
+    <div className="min-h-screen bg-ivory flex flex-col lg:flex-row">
+      <div className="lg:hidden bg-charcoal px-4 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-serif text-xl text-champagne">Yaale</p>
+            <p className="text-warm-gray text-[10px] tracking-widest uppercase mt-0.5">Admin Panel</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select value={tab} onChange={event => setTab(event.target.value)}
+              className="max-w-[150px] rounded-full border border-[#4a3a32] bg-charcoal px-3 py-2 text-xs text-champagne outline-none">
+              {sidebarItems.map(item => <option key={item}>{item}</option>)}
+            </select>
+            <button onClick={() => setPage('home')} className="rounded-full border border-[#4a3a32] px-3 py-2 text-xs text-champagne" aria-label="View store">↗</button>
+          </div>
+        </div>
+      </div>
+      {/* Sidebar */}
+      <aside className="w-60 bg-charcoal flex-shrink-0 flex flex-col hidden lg:flex">
+        <div className="p-6 border-b border-charcoal">
+          <p className="font-serif text-xl text-champagne">Yaale</p>
+          <p className="text-warm-gray text-[10px] tracking-widest uppercase mt-0.5">Admin Panel</p>
+        </div>
+        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+          {sidebarItems.map(item => (
+            <button key={item} onClick={() => setTab(item)}
+              className={`w-full text-left px-4 py-2.5 rounded-2xl text-sm transition-all ${tab === item ? 'bg-champagne/20 text-champagne' : 'text-warm-gray hover:bg-charcoal hover:text-white'}`}>
+              {item}
+            </button>
+          ))}
+        </nav>
+        <div className="p-4 border-t border-charcoal space-y-2">
+          <button onClick={() => setPage('home')} className="w-full text-left px-4 py-2.5 rounded-2xl text-sm text-warm-gray hover:bg-charcoal hover:text-white transition-all">
+            ← View Store
+          </button>
+          <button className="w-full text-left px-4 py-2.5 rounded-2xl text-sm text-wine hover:bg-charcoal hover:text-white transition-all">
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main className="min-w-0 flex-1 overflow-auto">
+        <div className="p-4 sm:p-8">
+          {/* Top bar */}
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h1 className="font-serif text-3xl text-charcoal">{tab}</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTab('Inbox')}
+                className="relative flex h-9 w-9 items-center justify-center rounded-full bg-charcoal text-champagne transition-colors hover:bg-charcoal"
+                aria-label="Open inbox"
+              >
+                <EnvelopeIcon />
+                {inboxMessages.filter(message => !message.is_read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-4 h-4 rounded-full bg-wine px-1 text-[9px] leading-4 text-white flex items-center justify-center">
+                    {Math.min(inboxMessages.filter(message => !message.is_read).length, 9)}
+                  </span>
+                )}
+              </button>
+              <div className="w-9 h-9 rounded-full bg-charcoal flex items-center justify-center">
+                <span className="text-champagne text-sm font-medium">A</span>
+              </div>
+            </div>
+          </div>
+
+          {tab === 'Dashboard' && (
+            <>
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+                {stats.map(s => (
+                  <div key={s.label} className="bg-white rounded-3xl border border-border p-5">
+                    <p className="text-xs tracking-wider uppercase text-warm-gray mb-2">{s.label}</p>
+                    <p className={`font-serif text-3xl ${s.color} mb-1`}>{s.value}</p>
+                    <p className="text-xs text-gold">{s.change}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent Orders */}
+              <div className="bg-white rounded-3xl border border-border overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-5 border-b border-border">
+                  <h2 className="font-serif text-xl text-charcoal">Recent Orders</h2>
+                 <button
+  onClick={() => setTab('Orders')}
+  className="text-xs tracking-wider text-gold uppercase border-b border-gold/40"
+>
+  View All
+</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                        {['Order ID', 'Customer', 'Product', 'Amount', 'Payment', 'Status', 'Date'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orders.map((o, i) => (
+                        <tr key={o.id} className={`border-t border-[#f0e9e0] text-sm ${i % 2 === 0 ? '' : 'bg-ivory/50'}`}>
+                          <td className="px-4 py-3 text-gold font-medium">{o.id}</td>
+                          <td className="px-4 py-3 text-charcoal">{o.customer_name}</td>
+                          <td className="px-4 py-3 text-charcoal">{o.product}</td>
+                          <td className="px-4 py-3 font-medium">
+  ₹{Number(o.amount ?? o.total_amount ?? 0).toLocaleString('en-IN')}
+</td>
+                          <td className="px-4 py-3"><span className="bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded-full">{o.payment_status}</span></td>
+                          <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${statusColor[o.status]}`}>{o.status}</span></td>
+                          <td className="px-4 py-3 text-warm-gray">
+  {o.created_at
+    ? new Date(o.created_at).toLocaleDateString('en-IN')
+    : '—'}
+</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {tab === 'Inbox' && (
+            <div className="space-y-4">
+              <div className="rounded-3xl border border-border bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between border-b border-[#f0e9e0] pb-4">
+                  <div>
+                    <p className="text-[10px] tracking-[0.28em] uppercase text-gold">Messages</p>
+                    <h2 className="mt-2 font-serif text-2xl text-charcoal">Inbox</h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTab('Dashboard')}
+                    className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal"
+                  >
+                    Back
+                  </button>
+                </div>
+
+                <div className="space-y-3 pt-5">
+                  {inboxLoading && (
+                    <div className="rounded-2xl border border-[#f0e9e0] bg-ivory p-4 text-sm text-warm-gray">
+                      Loading messages...
+                    </div>
+                  )}
+
+                  {!inboxLoading && inboxError && (
+                    <div className="rounded-2xl border border-[#f0e9e0] bg-ivory p-4 text-sm text-wine">
+                      {inboxError}
+                    </div>
+                  )}
+
+                  {!inboxLoading && !inboxError && inboxMessages.length === 0 && (
+                    <div className="rounded-2xl border border-[#f0e9e0] bg-ivory p-4 text-sm text-warm-gray">
+                      No customer messages yet.
+                    </div>
+                  )}
+
+                  {!inboxLoading && !inboxError && inboxMessages.map(message => (
+                    <div
+                      key={message.id}
+                      onClick={() => setSelectedInboxMessage(message)}
+                      className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border p-4 transition-colors ${message.is_read ? 'border-[#f0e9e0] bg-ivory' : 'border-champagne/40 bg-ivory'}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-charcoal text-xs font-semibold text-champagne">
+                          {String(message.name || 'C').charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-charcoal">{message.name}</p>
+                          <p className="mt-1 text-[11px] tracking-[0.18em] uppercase text-warm-gray">{message.email} · {message.mobile}</p>
+                          <p className="mt-2 text-sm text-warm-gray">{message.message}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className="text-[10px] uppercase tracking-[0.2em] text-warm-gray">
+                          {message.created_at ? new Date(message.created_at).toLocaleDateString('en-IN') : '—'}
+                        </span>
+                        {!message.is_read && (
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.stopPropagation()
+                              void markMessageAsRead(message.id)
+                            }}
+                            className="text-[10px] uppercase tracking-[0.2em] text-gold hover:text-charcoal"
+                          >
+                            Mark as read
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {selectedInboxMessage && (
+                <div
+                  className="fixed inset-0 z-[80] flex items-center justify-center bg-charcoal/50 p-4"
+                  onClick={() => setSelectedInboxMessage(null)}
+                >
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="inbox-message-title"
+                    className="w-full max-w-2xl rounded-[28px] border border-border bg-cream p-6 shadow-[0_18px_40px_rgba(44,35,32,0.18)]"
+                    onClick={event => event.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
+                      <div>
+                        <p className="text-[10px] tracking-[0.28em] uppercase text-gold">Customer Message</p>
+                        <h3 id="inbox-message-title" className="mt-2 font-serif text-2xl text-charcoal">{selectedInboxMessage.name}</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedInboxMessage(null)}
+                        className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="mt-6 space-y-5 text-sm text-charcoal">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <p className="text-[10px] tracking-[0.24em] uppercase text-warm-gray mb-1">Email</p>
+                          <p>{selectedInboxMessage.email}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] tracking-[0.24em] uppercase text-warm-gray mb-1">Phone</p>
+                          <p>{selectedInboxMessage.mobile}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] tracking-[0.24em] uppercase text-warm-gray mb-1">Date</p>
+                        <p>{selectedInboxMessage.created_at ? new Date(selectedInboxMessage.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] tracking-[0.24em] uppercase text-warm-gray mb-2">Message</p>
+                        <p className="whitespace-pre-wrap leading-7 text-gold">{selectedInboxMessage.message}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'Sarees' && (
+            <div className="space-y-6">
+               {/* EDIT SAREE FORM */}
+    {editingProduct && (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-charcoal/60 p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="edit-saree-title" className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-border bg-cream p-6 shadow-[0_18px_40px_rgba(44,35,32,0.18)]">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Edit</p>
+              <h2 id="edit-saree-title" className="font-serif text-2xl text-charcoal mt-2">Saree Details</h2>
+            </div>
+            <button onClick={() => setEditingProduct(null)} className="text-warm-gray hover:text-charcoal text-xs tracking-widest uppercase">Close</button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Saree Name</span>
+              <input
+                value={editingProduct.name}
+                onChange={event => setEditingProduct({ ...editingProduct, name: event.target.value })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">SKU</span>
+              <input
+                value={editingProduct.sku}
+                onChange={event => setEditingProduct({ ...editingProduct, sku: event.target.value })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Category</span>
+              <input
+                value={editingProduct.category}
+                onChange={event => setEditingProduct({ ...editingProduct, category: event.target.value })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Original Price</span>
+              <input
+                type="number"
+                value={editingProduct.originalPrice ?? ''}
+                onChange={event => setEditingProduct({ ...editingProduct, originalPrice: Number(event.target.value) })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Discount (%)</span>
+              <input
+                type="number"
+                value={editingProduct.discount ?? ''}
+                onChange={event => setEditingProduct({ ...editingProduct, discount: Number(event.target.value) })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Fabric</span>
+              <input
+                value={editingProduct.fabric}
+                onChange={event => setEditingProduct({ ...editingProduct, fabric: event.target.value })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Color</span>
+              <input
+                value={editingProduct.color}
+                onChange={event => setEditingProduct({ ...editingProduct, color: event.target.value })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Stock Quantity</span>
+              <input
+                type="number"
+                value={editingProduct.stock ?? ''}
+                onChange={event => setEditingProduct({ ...editingProduct, stock: Number(event.target.value) })}
+                className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+              />
+            </label>
+
+            <label className="block md:col-span-2">
+              <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Saree Photo</span>
+              <div>
+  <label className="mb-2 block text-sm font-medium text-warm-gray">
+    Saree Photo
+  </label>
+
+  <input
+    type="file"
+    accept="image/*"
+    onChange={e => {
+      const file = e.target.files?.[0]
+      if (!file) return
+
+      const imageUrl = URL.createObjectURL(file)
+
+      setEditingProduct({
+        ...editingProduct,
+        imageFile: file,
+        image: imageUrl,
+      })
+    }}
+    className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal"
+  />
+
+  {editingProduct.image && (
+    <img
+      src={editingProduct.image}
+      alt="Saree preview"
+      className="mt-3 h-32 w-28 rounded-xl object-cover border border-border"
+    />
+  )}
+</div>
+             
+            </label>
+
+            <div className="md:col-span-2">
+              <label className="block">
+                <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Product Description</span>
+                <textarea
+                  rows={4}
+                  value={editingProduct.description ?? ''}
+                  onChange={event => setEditingProduct({ ...editingProduct, description: event.target.value })}
+                  className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+                />
+              </label>
+            </div>
+
+            {[
+              ['Return & Exchange', 'returnExchange'],
+              ['Manufactured By', 'manufacturedBy'],
+              ['Marketed By', 'marketedBy'],
+            ].map(([label, field]) => (
+              <label key={label} className="block md:col-span-2">
+                <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">{label}</span>
+                <textarea
+                  rows={field === 'returnExchange' ? 3 : 2}
+                  value={String(editingProduct[field as keyof typeof editingProduct] ?? '')}
+                  onChange={event =>
+                    setEditingProduct({
+                      ...editingProduct,
+                      [field as keyof typeof editingProduct]: event.target.value,
+                    })
+                  }
+                  className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-6 flex items-center justify-between border-t border-border pt-5">
+            <button onClick={() => setEditingProduct(null)} className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal">Cancel</button>
+            <button onClick={updateSaree} className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+              {showAddForm && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-charcoal/60 p-4">
+                  <div role="dialog" aria-modal="true" aria-labelledby="add-saree-title" className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-border bg-cream p-6 shadow-[0_18px_40px_rgba(44,35,32,0.18)]">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Add New</p>
+                      <h2 id="add-saree-title" className="font-serif text-2xl text-charcoal mt-2">Saree Details</h2>
+                    </div>
+                    <button onClick={() => setShowAddForm(false)} className="text-warm-gray hover:text-charcoal text-xs tracking-widest uppercase">Close</button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {[
+                      ['Saree Name', 'name'], ['SKU', 'sku'], ['Category', 'category'], ['Price', 'price'],
+                      ['Discount (%)', 'discount'], ['Fabric', 'fabric'], ['Color', 'color'],
+                      ['Saree Length', 'length'], ['Blouse Included', 'blouse'], ['Occasion', 'occasion'], ['Stock Quantity', 'stock'],
+                    ].map(([label, field]) => (
+                      <label key={label} className="block">
+                        <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">{label}</span>
+                        <input value={String(newSaree[field as keyof typeof newSaree] ?? '')} onChange={event => updateSareeField(field as keyof typeof newSaree, event.target.value)} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne" />
+                      </label>
+                    ))}
+
+                    <label className="block md:col-span-2">
+  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">
+    Saree Photos
+  </span>
+
+  <input
+    type="file"
+    accept="image/*"
+    multiple
+    onChange={event => handleSareePhotos(event.target.files)}
+    className="w-full rounded-2xl border border-dashed border-champagne bg-white px-4 py-3 text-sm text-charcoal outline-none file:mr-4 file:rounded-full file:border-0 file:bg-cream file:px-4 file:py-2 file:text-xs file:text-charcoal"
+  />
+
+  {newSaree.images.length > 0 && (
+    <div className="mt-3 flex flex-wrap gap-3">
+      {newSaree.images.map((image, index) => (
+        <img
+          key={index}
+          src={image}
+          alt={`Selected saree ${index + 1}`}
+          className="h-28 w-24 rounded-xl object-cover"
+        />
+      ))}
+    </div>
+  )}
+</label>
+                    
+
+                    {[
+                      ['Return & Exchange', 'returnExchange'],
+                      ['Manufactured By', 'manufacturedBy'],
+                      ['Marketed By', 'marketedBy'],
+                    ].map(([label, field]) => (
+                      <label key={label} className="block md:col-span-2">
+                        <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">{label}</span>
+                        <textarea
+  rows={field === 'returnExchange' ? 3 : 2}
+  value={String(newSaree[field as keyof typeof newSaree] ?? '')}
+  onChange={event =>
+    updateSareeField(
+      field as keyof typeof newSaree,
+      event.target.value
+    )
+  }
+  className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+/>
+                      </label>
+                    ))}
+
+                    <div className="md:col-span-2 flex flex-wrap items-center gap-4 pt-2">
+                      <label className="flex items-center gap-2 text-sm text-charcoal">
+                        <input type="checkbox" defaultChecked className="accent-wine" />
+                        Featured
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-charcoal">
+                        <input type="checkbox" defaultChecked className="accent-wine" />
+                        New Arrival
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-between border-t border-border pt-5">
+                    <button onClick={() => setShowAddForm(false)} className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal">Cancel</button>
+                    <button onClick={saveSaree} className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal">Save Saree</button>
+                  </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-[28px] border border-border bg-white p-6">
+                <div className="mb-5">
+                  <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Homepage Stories</p>
+                  <h2 className="font-serif text-2xl text-charcoal mt-2">Upload Editorial Video</h2>
+                  <p className="mt-1 text-sm text-warm-gray">Uploaded videos appear in the Festive Edit rail on the customer homepage.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1.4fr_auto] md:items-end">
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Story Title</span>
+                    <input value={newVideo.title} onChange={event => setNewVideo(current => ({ ...current, title: event.target.value }))}
+                      className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none focus:border-champagne" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Video File</span>
+                    <input ref={videoInputRef} type="file" accept="video/mp4,video/webm,video/quicktime" onChange={event => handleEditorialVideo(event.target.files?.[0])}
+                      className="w-full rounded-2xl border border-dashed border-champagne bg-white px-4 py-3 text-sm text-charcoal outline-none file:mr-4 file:rounded-full file:border-0 file:bg-cream file:px-4 file:py-2 file:text-xs file:text-charcoal" />
+                  </label>
+                  <button onClick={saveEditorialVideo} disabled={!newVideo.videoFile || videoUploading}
+                    className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal disabled:cursor-not-allowed disabled:opacity-40">
+                    {videoUploading ? 'Uploading...' : 'Add Video'}
+                  </button>
+                </div>
+                <div className="mt-5 border-t border-border pt-4">
+                  {videosLoading ? (
+                    <p className="text-sm text-warm-gray">Loading videos...</p>
+                  ) : videosError ? (
+                    <p className="text-sm text-warm-gray">{videosError}</p>
+                  ) : videos.length === 0 ? (
+                    <p className="text-sm text-warm-gray">No videos uploaded.</p>
+                  ) : (
+                    <div className="divide-y divide-[#f0e9e0]">
+                      {videos.map(video => (
+                        <div key={video.id} className="flex items-center justify-between gap-4 py-3 text-sm">
+                          <span className="truncate text-charcoal">{video.title}</span>
+                          <button
+                            onClick={() => deleteEditorialVideo(video.id)}
+                            disabled={deletingVideoId === video.id}
+                            className="shrink-0 text-xs text-wine hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {deletingVideoId === video.id ? 'Deleting...' : 'Delete'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[28px] border border-border overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-5 border-b border-border">
+                  <h2 className="font-serif text-xl text-charcoal">All Sarees</h2>
+                  <button onClick={() => setShowAddForm(true)} className="bg-charcoal text-champagne px-5 py-2 rounded-full text-xs tracking-widest uppercase">+ Add Saree</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                        {['Product', 'SKU', 'Category', 'Price', 'Stock', 'Status', 'Actions'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {products.map(p => (
+                        <tr key={p.id} className="border-t border-[#f0e9e0] text-sm">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-12 rounded-xl overflow-hidden bg-[#f0e9dd] flex-shrink-0">
+                               <img
+  src={p.images?.find(image => image.trim()) || p.image}
+  alt=""
+  className="w-full h-full object-cover"
+  onError={event => {
+    const image = event.currentTarget
+    if (p.image && image.src !== p.image) {
+      image.src = p.image
+      return
+    }
+    image.style.display = 'none'
+  }}
+/>
+                              </div>
+                              <span className="font-medium text-charcoal">{p.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-warm-gray">{p.sku}</td>
+                          <td className="px-4 py-3 text-charcoal">{p.category}</td>
+                          <td className="px-4 py-3 font-medium">₹{p.price.toLocaleString('en-IN')}</td>
+                          <td className="px-4 py-3 text-charcoal">{p.stock ?? 0}</td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${p.inStock ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                              {p.inStock ? 'In Stock' : 'Out of Stock'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex gap-2">
+                              <button
+  onClick={() => editSaree(p)}
+  className="text-xs text-gold hover:underline"
+>
+  Edit
+</button>
+                              <button
+  onClick={() => deleteSaree(p.id)}
+  className="text-xs text-wine hover:underline"
+>
+  Delete
+</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Inventory' && (
+            <div className="bg-white rounded-3xl border border-border overflow-hidden">
+              <div className="px-6 py-5 border-b border-border">
+                <h2 className="font-serif text-xl text-charcoal">Inventory Management</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                      {['Saree', 'SKU', 'Category', 'Stock', 'Price', 'Status'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productsLoading ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">Loading inventory...</td>
+                      </tr>
+                    ) : productsError ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-wine">{productsError}</td>
+                      </tr>
+                    ) : products.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">No inventory products found.</td>
+                      </tr>
+                    ) : products.map(p => {
+                      const stock = p.stock ?? 0
+                      const stockStatus = stock === 0 ? 'OUT OF STOCK' : stock <= 5 ? 'LOW STOCK' : 'IN STOCK'
+                      const sc = { 'IN STOCK': 'bg-green-50 text-green-700', 'LOW STOCK': 'bg-amber-50 text-amber-700', 'OUT OF STOCK': 'bg-red-50 text-red-700' }[stockStatus]
+                      return (
+                        <tr key={p.id} className="border-t border-[#f0e9e0] text-sm">
+                          <td className="px-4 py-3 font-medium text-charcoal">{p.name}</td>
+                          <td className="px-4 py-3 text-warm-gray">{p.sku}</td>
+                          <td className="px-4 py-3">{p.category}</td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              aria-label={`Stock for ${p.name}`}
+                              value={inventoryStockDrafts[p.id] ?? String(stock)}
+                              disabled={inventorySavingId !== null}
+                              onChange={event => {
+                                setInventoryStockDrafts(current => ({ ...current, [p.id]: event.target.value }))
+                                setInventoryErrors(current => {
+                                  const next = { ...current }
+                                  delete next[p.id]
+                                  return next
+                                })
+                              }}
+                              onBlur={event => { void saveInventoryStock(p, event.currentTarget.value) }}
+                              onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                              className="w-16 border border-border rounded-lg px-2 py-1 text-center text-sm outline-none focus:border-champagne disabled:opacity-60"
+                            />
+                            {inventoryErrors[p.id] && <p role="alert" className="mt-1 max-w-40 text-xs text-wine">{inventoryErrors[p.id]}</p>}
+                            {inventorySavingId === p.id && <p className="mt-1 text-xs text-warm-gray">Saving...</p>}
+                          </td>
+                          <td className="px-4 py-3 font-medium">₹{p.price.toLocaleString('en-IN')}</td>
+                          <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${sc}`}>{stockStatus}</span></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Orders' && (
+            <div className="bg-white rounded-3xl border border-border overflow-hidden">
+              <div className="px-6 py-5 border-b border-border">
+                <h2 className="font-serif text-xl text-charcoal">All Orders</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                      {['Order ID', 'Customer', 'Product', 'Amount', 'Payment', 'Status', 'Date', 'Action'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+  {ordersLoading ? (
+    <tr>
+      <td
+        colSpan={8}
+        className="px-4 py-8 text-center text-sm text-warm-gray"
+      >
+        Loading orders...
+      </td>
+    </tr>
+  ) : ordersError ? (
+    <tr>
+      <td colSpan={8} role="alert" className="px-4 py-8 text-center text-sm text-wine">
+        {ordersError}
+      </td>
+    </tr>
+  ) : orders.length === 0 ? (
+    <tr>
+      <td
+        colSpan={8}
+        className="px-4 py-8 text-center text-sm text-warm-gray"
+      >
+        No orders found.
+      </td>
+    </tr>
+  ) : (
+    orders.map((o, i) => (
+      <tr
+        key={o.id}
+        className={`border-t border-[#f0e9e0] text-sm ${
+          i % 2 === 0 ? '' : 'bg-ivory/50'
+        }`}
+      >
+        <td className="px-4 py-3 text-gold font-medium">
+          {o.order_number}
+        </td>
+
+        <td className="px-4 py-3">
+          {o.customer_name}
+        </td>
+
+        <td className="px-4 py-3">
+        {o.items?.[0]
+  ? `${o.items[0].product_name} × ${o.items[0].quantity}`
+  : '—'}
+        </td>
+
+        <td className="px-4 py-3 font-medium">
+         ₹{Number(o.total_amount ?? o.amount ?? 0).toLocaleString('en-IN')}
+        </td>
+
+        <td className="px-4 py-3">
+          <span className="bg-yellow-50 text-yellow-700 text-xs px-2 py-0.5 rounded-full">
+            {o.payment_status}
+          </span>
+        </td>
+
+        <td className="px-4 py-3">
+          <div className="min-w-36 space-y-1.5">
+            <select
+              value={o.status}
+              disabled={orderStatusSavingId !== null}
+              onChange={event => { void updateOrderStatus(o, event.target.value) }}
+              className="w-full text-xs border border-border rounded-full px-3 py-1 outline-none disabled:opacity-60"
+            >
+              {[
+                'Pending',
+                'Confirmed',
+                'Packed',
+                'Shipped',
+                'Out for Delivery',
+                'Delivered',
+                'Cancelled',
+              ].map(status => <option key={status}>{status}</option>)}
+            </select>
+            <input
+              type="text"
+              maxLength={1000}
+              aria-label={`Optional status note for order ${o.order_number}`}
+              placeholder="Optional note"
+              value={orderStatusNotes[o.id] ?? ''}
+              disabled={orderStatusSavingId !== null}
+              onChange={event => setOrderStatusNotes(current => ({ ...current, [o.id]: event.target.value }))}
+              className="w-full rounded-lg border border-border px-2 py-1 text-[11px] text-charcoal outline-none focus:border-champagne disabled:opacity-60"
+            />
+            {orderStatusSavingId === o.id && <p className="text-[11px] text-warm-gray">Saving...</p>}
+            {orderStatusErrors[o.id] && <p role="alert" className="text-[11px] text-wine">{orderStatusErrors[o.id]}</p>}
+          </div>
+        </td>
+
+        <td className="px-4 py-3 text-warm-gray">
+          {new Date(o.created_at).toLocaleDateString('en-IN')}
+        </td>
+
+        <td className="px-4 py-3">
+          
+          <button
+            onClick={() => setSelectedOrder(o)}
+            className="text-xs text-gold hover:underline"
+          >
+            View
+          </button>
+        </td>
+      </tr>
+    ))
+  )}
+</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Customers' && (
+            <div className="bg-white rounded-3xl border border-border overflow-hidden">
+              <div className="px-6 py-5 border-b border-border">
+                <h2 className="font-serif text-xl text-charcoal">Customers</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                      {['Name', 'Email', 'Phone', 'Orders', 'Joined', 'Status'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customersLoading ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">Loading customers...</td></tr>
+                    ) : customersError ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-wine">{customersError}</td></tr>
+                    ) : customers.length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">No customers found.</td></tr>
+                    ) : customers.map(c => (
+                      <tr key={c.phone} className="border-t border-[#f0e9e0] text-sm">
+                        <td className="px-4 py-3 font-medium text-charcoal">{c.name}</td>
+                        <td className="px-4 py-3 text-warm-gray">{c.email || '—'}</td>
+                        <td className="px-4 py-3 text-warm-gray">{c.phone}</td>
+                        <td className="px-4 py-3">{c.orders}</td>
+                        <td className="px-4 py-3 text-warm-gray">{c.joined_at ? new Date(c.joined_at).toLocaleDateString('en-IN') : '—'}</td>
+                        <td className="px-4 py-3">{c.is_active === null ? '—' : <span className={`text-xs px-2 py-0.5 rounded-full ${c.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Categories' && (
+            <div className="space-y-5">
+              <div className="bg-white rounded-[28px] border border-border p-5 sm:p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="font-serif text-xl text-charcoal">Category Library</h2>
+                  <button onClick={addCategory} className="rounded-full bg-charcoal px-4 py-2 text-[10px] tracking-[0.24em] uppercase text-champagne">+ Add Category</button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {categoriesLoading ? (
+                    <p className="text-sm text-warm-gray">Loading categories...</p>
+                  ) : categoriesError ? (
+                    <p className="text-sm text-wine">{categoriesError}</p>
+                  ) : categories.length === 0 ? (
+                    <p className="text-sm text-warm-gray">No categories found.</p>
+                  ) : categories.map(category => (
+                    <div key={category.id} className="rounded-3xl border border-border bg-ivory p-5">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-[10px] tracking-[0.24em] uppercase text-gold">Category</p>
+                          <h3 className="font-serif text-2xl text-charcoal mt-2">{category.name}</h3>
+                        </div>
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em] uppercase ${category.is_active ? 'bg-green-50 text-green-700' : 'bg-cream text-warm-gray'}`}>
+                          {category.is_active ? 'Active' : 'Draft'}
+                        </span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-warm-gray">{category.description}</p>
+                      <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-sm">
+                        <span className="text-charcoal font-medium">{category.products_count} products</span>
+                        <div className="flex gap-3">
+                          <button onClick={() => editCategory(category)} className="text-gold hover:text-charcoal">Edit</button>
+                          <button onClick={() => deleteCategory(category)} className="text-wine hover:text-charcoal">Delete</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Settings' && (
+            <div className="space-y-5">
+              {!adminSession && (
+                <div role="alert" className="rounded-3xl border border-border bg-white p-6 text-sm text-wine">
+                  Sign in with an administrator account to view or change store settings.
+                  <button onClick={() => setPage('admin-login')} className="ml-2 text-gold hover:underline">Sign in</button>
+                </div>
+              )}
+              {storeSettingsLoading && <p className="px-2 py-4 text-sm text-warm-gray">Loading store settings...</p>}
+              {storeSettingsError && <p role="alert" className="rounded-3xl border border-border bg-white p-4 text-sm text-wine">{storeSettingsError}</p>}
+              {storeSettingsMessage && <p role="status" className="rounded-3xl border border-border bg-white p-4 text-sm text-green-700">{storeSettingsMessage}</p>}
+
+              <div className="rounded-[28px] border border-border bg-white p-5 sm:p-6">
+                <div className="mb-5">
+                  <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Store</p>
+                  <h2 className="mt-2 font-serif text-2xl text-charcoal">Store Information</h2>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Store Name</span>
+                    <input value={storeSettings.store_name} onChange={event => setStoreSettings(current => ({ ...current, store_name: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Store Email</span>
+                    <input type="email" value={storeSettings.store_email} onChange={event => setStoreSettings(current => ({ ...current, store_email: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Phone</span>
+                    <input type="tel" value={storeSettings.store_phone} onChange={event => setStoreSettings(current => ({ ...current, store_phone: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                  <label className="block md:col-span-2">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Address</span>
+                    <textarea rows={3} value={storeSettings.store_address} onChange={event => setStoreSettings(current => ({ ...current, store_address: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                </div>
+                {settingsActionButtons()}
+              </div>
+
+              <div className="rounded-[28px] border border-border bg-white p-5 sm:p-6">
+                <div className="mb-5">
+                  <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Delivery</p>
+                  <h2 className="mt-2 font-serif text-2xl text-charcoal">Shipping Settings</h2>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Shipping Fee</span>
+                    <input type="number" min="0" step="0.01" value={storeSettings.shipping_fee} onChange={event => setStoreSettings(current => ({ ...current, shipping_fee: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Free-Shipping Threshold</span>
+                    <input type="number" min="0" step="0.01" value={storeSettings.free_shipping_threshold} onChange={event => setStoreSettings(current => ({ ...current, free_shipping_threshold: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                  </label>
+                </div>
+                {settingsActionButtons()}
+              </div>
+
+              <div className="rounded-[28px] border border-border bg-white p-5 sm:p-6">
+                <div className="mb-5">
+                  <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Customer Terms</p>
+                  <h2 className="mt-2 font-serif text-2xl text-charcoal">Store Policies</h2>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {[
+                    ['Return Policy', 'return_policy'],
+                    ['Shipping Policy', 'shipping_policy'],
+                    ['Privacy Policy', 'privacy_policy'],
+                    ['Terms & Conditions', 'terms_policy'],
+                  ].map(([label, field]) => (
+                    <label key={field} className="block">
+                      <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">{label}</span>
+                      <textarea rows={5} value={storeSettings[field as keyof StoreSettingsForm]} onChange={event => setStoreSettings(current => ({ ...current, [field]: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full resize-y rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                    </label>
+                  ))}
+                </div>
+                {settingsActionButtons()}
+              </div>
+
+              <div className="rounded-[28px] border border-border bg-white p-5 sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] tracking-[0.32em] uppercase text-gold">Secure Access</p>
+                    <h2 className="mt-2 font-serif text-2xl text-charcoal">Admin Account</h2>
+                    {adminSession ? (
+                      <div className="mt-3 text-sm text-warm-gray">
+                        <p className="text-charcoal">{adminSession.user.name}</p>
+                        <p>{adminSession.user.email}</p>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-warm-gray">No administrator is signed in.</p>
+                    )}
+                  </div>
+                  {adminSession && <button onClick={onLogout} className="rounded-full bg-charcoal px-5 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal">Sign Out</button>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'Offers' && (
+            <div className="space-y-5">
+              <div className="bg-white rounded-[28px] border border-border p-5 sm:p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="font-serif text-xl text-charcoal">Offer Center</h2>
+                  <button onClick={openAddOffer} className="rounded-full bg-charcoal px-4 py-2 text-[10px] tracking-[0.24em] uppercase text-champagne">+ Add Offer</button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {offersLoading ? (
+                    <p className="text-sm text-warm-gray">Loading offers...</p>
+                  ) : offersError ? (
+                    <p className="text-sm text-wine">{offersError}</p>
+                  ) : offers.length === 0 ? (
+                    <p className="text-sm text-warm-gray">No offers found.</p>
+                  ) : offers.map(offer => (
+                    <div key={offer.id} className="rounded-3xl border border-border bg-ivory p-5">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <span className="rounded-full bg-cream px-2.5 py-1 text-[10px] tracking-[0.18em] uppercase text-wine">{offer.type}</span>
+                        <span className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">{offer.status}</span>
+                      </div>
+                      <h3 className="font-serif text-2xl text-charcoal">{offer.title}</h3>
+                      <p className="mt-3 text-xl font-medium text-charcoal">{offer.value}</p>
+                      <p className="mt-3 text-sm leading-relaxed text-warm-gray">{offer.description}</p>
+                      <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-sm">
+                        <span className="text-charcoal font-medium">{offer.status}</span>
+                        <div className="flex gap-3">
+                          <button onClick={() => openEditOffer(offer)} className="text-gold hover:text-charcoal">Edit</button>
+                          <button onClick={() => openDeleteOffer(offer)} className="text-wine hover:text-charcoal">Delete</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+      
+
+                    {!['Dashboard', 'Sarees', 'Inventory', 'Orders', 'Customers', 'Categories', 'Offers', 'Settings'].includes(tab) && (
+            <div className="bg-white rounded-3xl border border-border p-16 text-center">
+              <p className="font-serif text-2xl text-charcoal mb-2">{tab}</p>
+              <p className="text-warm-gray font-light">This section is coming soon.</p>
+            </div>
+          )}
+        </div>
+
+        {successMessage && (
+          <div className="fixed bottom-6 right-6 z-[9999] flex items-center gap-3 rounded-xl bg-wine px-6 py-4 text-white shadow-lg">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-wine">
+              ✓
+            </div>
+
+            <span className="font-medium">
+              {successMessage}
+            </span>
+          </div>
+        )}
+
+      </main>
+
+      {categoryDialog && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-charcoal/60 p-4"
+          onClick={() => { if (!categoryActionLoading) setCategoryDialog(null) }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="category-dialog-title"
+            className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[28px] border border-border bg-cream p-6 shadow-[0_18px_40px_rgba(44,35,32,0.18)]"
+            onClick={event => event.stopPropagation()}
+          >
+            <p className="text-[10px] tracking-[0.32em] uppercase text-gold">
+              {categoryDialog === 'delete' ? 'Confirm' : categoryDialog === 'edit' ? 'Edit' : 'New'}
+            </p>
+            <h2 id="category-dialog-title" className="mt-2 font-serif text-2xl text-charcoal">
+              {categoryDialog === 'delete' ? 'Delete Category' : categoryDialog === 'edit' ? 'Edit Category' : 'Add Category'}
+            </h2>
+
+            {categoryDialog === 'delete' ? (
+              <p className="mt-4 text-sm leading-relaxed text-warm-gray">
+                Are you sure you want to delete <span className="font-medium text-charcoal">{selectedCategory?.name}</span>?
+              </p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Category Name</span>
+                  <input
+                    autoFocus
+                    value={categoryForm.name}
+                    onChange={event => setCategoryForm(current => ({ ...current, name: event.target.value }))}
+                    className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Description</span>
+                  <textarea
+                    rows={3}
+                    value={categoryForm.description}
+                    onChange={event => setCategoryForm(current => ({ ...current, description: event.target.value }))}
+                    className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+                  />
+                </label>
+              </div>
+            )}
+
+            {categoryActionError && (
+              <p role="alert" className="mt-4 whitespace-pre-line text-sm text-wine">{categoryActionError}</p>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-5">
+              <button
+                type="button"
+                onClick={() => setCategoryDialog(null)}
+                disabled={categoryActionLoading}
+                className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              {categoryDialog === 'delete' ? (
+                <button
+                  type="button"
+                  onClick={confirmDeleteCategory}
+                  disabled={categoryActionLoading}
+                  className="rounded-full bg-wine px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-white transition hover:bg-wine disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {categoryActionLoading ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={saveCategory}
+                  disabled={categoryActionLoading}
+                  className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {categoryActionLoading ? 'Saving...' : categoryDialog === 'edit' ? 'Save Changes' : 'Save'}
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {offerDialog && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-charcoal/60 p-4"
+          onClick={() => { if (!offerActionLoading) setOfferDialog(null) }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="offer-dialog-title"
+            className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[28px] border border-border bg-cream p-6 shadow-[0_18px_40px_rgba(44,35,32,0.18)]"
+            onClick={event => event.stopPropagation()}
+          >
+            <p className="text-[10px] tracking-[0.32em] uppercase text-gold">
+              {offerDialog === 'delete' ? 'Confirm' : offerDialog === 'edit' ? 'Edit' : 'New'}
+            </p>
+            <h2 id="offer-dialog-title" className="mt-2 font-serif text-2xl text-charcoal">
+              {offerDialog === 'delete' ? 'Delete Offer' : offerDialog === 'edit' ? 'Edit Offer' : 'Add Offer'}
+            </h2>
+
+            {offerDialog === 'delete' ? (
+              <p className="mt-4 text-sm leading-relaxed text-warm-gray">
+                Are you sure you want to delete <span className="font-medium text-charcoal">{selectedOffer?.title}</span>?
+              </p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Title</span>
+                  <input value={offerForm.title} onChange={event => setOfferForm(current => ({ ...current, title: event.target.value }))} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne" />
+                </label>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Type</span>
+                    <select value={offerForm.type} onChange={event => setOfferForm(current => ({ ...current, type: event.target.value as OfferType }))} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none focus:border-champagne">
+                      {(['Discount', 'Coupon', 'Banner', 'Promotion'] as const).map(type => <option key={type}>{type}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Offer Value or Code</span>
+                    <input value={offerForm.value} onChange={event => setOfferForm(current => ({ ...current, value: event.target.value }))} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne" />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Description</span>
+                  <textarea rows={3} value={offerForm.description} onChange={event => setOfferForm(current => ({ ...current, description: event.target.value }))} className="w-full resize-none rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne" />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">Status</span>
+                  <select value={offerForm.status} onChange={event => setOfferForm(current => ({ ...current, status: event.target.value as OfferStatus }))} className="w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none focus:border-champagne">
+                    {(['Active', 'Scheduled', 'Paused'] as const).map(status => <option key={status}>{status}</option>)}
+                  </select>
+                </label>
+              </div>
+            )}
+
+            {offerActionError && <p role="alert" className="mt-4 whitespace-pre-line text-sm text-wine">{offerActionError}</p>}
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-border pt-5">
+              <button type="button" onClick={() => setOfferDialog(null)} disabled={offerActionLoading} className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal disabled:opacity-40">Cancel</button>
+              {offerDialog === 'delete' ? (
+                <button type="button" onClick={confirmDeleteOffer} disabled={offerActionLoading} className="rounded-full bg-wine px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-white transition hover:bg-wine disabled:cursor-not-allowed disabled:opacity-40">{offerActionLoading ? 'Deleting...' : 'Confirm Delete'}</button>
+              ) : (
+                <button type="button" onClick={saveOffer} disabled={offerActionLoading} className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal disabled:cursor-not-allowed disabled:opacity-40">{offerActionLoading ? 'Saving...' : offerDialog === 'edit' ? 'Save Changes' : 'Save'}</button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedOrder && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-charcoal/60 p-3 sm:p-6"
+          onClick={() => setSelectedOrder(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-details-title"
+            className="my-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-ivory shadow-[0_18px_50px_rgba(30,21,16,0.28)]"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-border bg-white px-5 py-5 sm:px-7">
+              <div className="min-w-0">
+                <p className="text-[10px] tracking-[0.24em] uppercase text-gold">Order details</p>
+                <h2 id="order-details-title" className="mt-1 break-all font-serif text-2xl text-charcoal">
+                  {selectedOrder.order_number}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedOrder(null)}
+                className="shrink-0 rounded-full border border-border px-3 py-2 text-xs text-warm-gray transition hover:border-[#4a3a32] hover:text-charcoal"
+                aria-label="Close order details"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-x-8 gap-y-5 px-5 py-6 sm:grid-cols-2 sm:px-7">
+              <div>
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Customer</p>
+                <p className="mt-1 break-words text-sm font-medium text-charcoal">{selectedOrder.customer_name || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Phone</p>
+                <p className="mt-1 break-words text-sm text-charcoal">{selectedOrder.customer_phone || '—'}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Delivery address</p>
+                <p className="mt-1 break-words text-sm leading-relaxed text-charcoal">{selectedOrder.customer_address || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Order amount</p>
+                <p className="mt-1 text-lg font-medium text-charcoal">
+                  ₹{Number(selectedOrder.total_amount ?? selectedOrder.amount ?? 0).toLocaleString('en-IN')}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Payment</p>
+                <span className="mt-1 inline-flex rounded-full bg-yellow-50 px-3 py-1 text-xs text-yellow-700">
+                  {selectedOrder.payment_status || '—'}
+                </span>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Order status</p>
+                <span className="mt-1 inline-flex rounded-full bg-cream px-3 py-1 text-xs text-wine">
+                  {selectedOrder.status || '—'}
+                </span>
+              </div>
+              <div className="sm:col-span-2 border-t border-border pt-5">
+                <h3 className="font-serif text-lg text-charcoal">Status history</h3>
+                {[...(selectedOrder.status_history ?? [])]
+                  .sort((first, second) => new Date(first.created_at).getTime() - new Date(second.created_at).getTime())
+                  .map((event: { id: number; status: string; note?: string | null; created_at: string }) => (
+                    <div key={event.id} className="mt-4 border-l-2 border-champagne pl-4">
+                      <p className="text-sm font-medium text-charcoal">{event.status}</p>
+                      <p className="mt-1 text-xs text-gold">{new Date(event.created_at).toLocaleString('en-IN')}</p>
+                      {event.note && <p className="mt-1 text-sm text-warm-gray">{event.note}</p>}
+                    </div>
+                  ))}
+                {(!selectedOrder.status_history || selectedOrder.status_history.length === 0) && (
+                  <p className="mt-3 text-sm text-warm-gray">No status history recorded.</p>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Footer({ setPage }: { setPage: (p: Page) => void }) {
+  const storeSettings = useContext(StoreSettingsContext)
+  const footerAddress = storeSettings.store_address.trim() || CONTACT_ADDRESS
+  const footerPhone = storeSettings.store_phone.trim() || DEFAULT_CONTACT_PHONE
+  const footerEmail = storeSettings.store_email.trim() || DEFAULT_CONTACT_EMAIL
+
+  return (
+    <footer className="bg-charcoal text-white mt-0">
+      <div className="max-w-7xl mx-auto px-6 sm:px-8 py-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+        <div>
+          <img src="/yaale-logo.jpeg" alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
+          <p className="text-white/50 text-sm font-light leading-relaxed">Handpicked sarees from India's finest weavers. Crafted for moments that matter.</p>
+          <address className="mt-3 text-sm text-white/60 font-light leading-relaxed not-italic">
+            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(footerAddress)}`} target="_blank" rel="noreferrer">
+              {footerAddress.split(',').map((line, index, lines) => (
+                <span key={`${line}-${index}`}>
+                  {line.trim()}
+                  {index < lines.length - 1 && <><br /></>}
+                </span>
+              ))}
+            </a>
+          </address>
+          <div className="mt-3 space-y-1 text-sm text-white/60 font-light">
+            <p>{footerPhone}</p>
+            <p>{footerEmail}</p>
+          </div>
+          <button onClick={() => setPage('admin-login')} className="mt-4 inline-flex items-center text-[10px] tracking-[0.25em] uppercase text-champagne hover:text-[#f2d8a3] transition-colors">
+            Admin
+          </button>
+        </div>
+        <div>
+          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Shop</p>
+          <div className="space-y-3">
+            {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
+              <button key={l} onClick={() => setPage('shop')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Customer Care</p>
+          <div className="space-y-3">
+            {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
+              <button key={l} onClick={() => setPage('contact')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Follow Us</p>
+          <div className="flex flex-col gap-3">
+            <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">Instagram</a>
+            <a href="https://wa.me/919150130613" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">WhatsApp</a>
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-charcoal px-6 sm:px-8 py-6">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-white/30 text-xs">© 2026 Yaale. All Rights Reserved.</p>
+          <div className="flex gap-5">
+            {['Privacy Policy', 'Terms', 'Shipping', 'No Refund Policy'].map(l => (
+              <button key={l} className="text-white/30 text-xs hover:text-white/60 transition-colors">{l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </footer>
+  )
+}
+
+// ── Icon primitives ────────────────────────────────────────────────────────
+function HeartIcon({ filled = false, size = 18 }: { filled?: boolean, size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  )
+}
+function BagIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  )
+}
+function UserIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  )
+}
+function MenuIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  )
+}
+function XIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
+function EnvelopeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z" />
+      <path d="m5 7 7 5 7-5" />
+    </svg>
+  )
+}
+function ArrowRightIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
+    </svg>
+  )
+}
+function FilterIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M4 6h16M7 12h10M10 18h4" />
+    </svg>
+  )
+}
+
+// ── Root App ───────────────────────────────────────────────────────────────
+const ADMIN_SESSION_KEY = 'yaale_admin_session'
+const CUSTOMER_SESSION_KEY = 'yaale_customer_session'
+const CART_STORAGE_KEY = 'yaale_cart'
+
+export default function App() {
+  const [page, setPageState] = useState<Page>('home')
+  const [shopFilter, setShopFilter] = useState<ShopCategoryFilter>('ALL')
+  const [adminSession, setAdminSession] = useState<AdminAuthSession | null>(() => {
+    // Check localStorage first (Remember Me), then sessionStorage (current session)
+    const stored = localStorage.getItem(ADMIN_SESSION_KEY) ?? sessionStorage.getItem(ADMIN_SESSION_KEY)
+    if (!stored) return null
+
+    try {
+      return JSON.parse(stored) as AdminAuthSession
+    } catch {
+      localStorage.removeItem(ADMIN_SESSION_KEY)
+      sessionStorage.removeItem(ADMIN_SESSION_KEY)
+      return null
+    }
+  })
+  const [customerSession, setCustomerSession] = useState<CustomerAuthSession | null>(() => {
+    const storedSession = sessionStorage.getItem(CUSTOMER_SESSION_KEY)
+    if (!storedSession) return null
+
+    try {
+      return JSON.parse(storedSession) as CustomerAuthSession
+    } catch {
+      sessionStorage.removeItem(CUSTOMER_SESSION_KEY)
+      return null
+    }
+  })
+  const [products, setProducts] = useState<Product[]>([])
+  const [productsLoading, setProductsLoading] = useState(true)
+  const [productsError, setProductsError] = useState('')
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [videos, setVideos] = useState<EditorialVideo[]>([])
+  const [videosLoading, setVideosLoading] = useState(true)
+  const [videosError, setVideosError] = useState('')
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const storedCart = localStorage.getItem(CART_STORAGE_KEY)
+      if (!storedCart) return []
+
+      const parsedCart: unknown = JSON.parse(storedCart)
+      if (!Array.isArray(parsedCart)) return []
+
+      return parsedCart.filter((item): item is CartItem => {
+        if (typeof item !== 'object' || item === null) return false
+
+        const cartItem = item as Partial<CartItem>
+        return typeof cartItem.id === 'number'
+          && Number.isInteger(cartItem.qty)
+          && (cartItem.qty ?? 0) > 0
+          && typeof cartItem.name === 'string'
+          && typeof cartItem.price === 'number'
+          && Number.isFinite(cartItem.price)
+          && typeof cartItem.category === 'string'
+          && typeof cartItem.image === 'string'
+          && typeof cartItem.fabric === 'string'
+          && typeof cartItem.color === 'string'
+          && typeof cartItem.sku === 'string'
+          && typeof cartItem.inStock === 'boolean'
+      })
+    } catch {
+      return []
+    }
+  })
+  const [lastOrderNumber, setLastOrderNumber] = useState('')
+  const [wishlist, setWishlist] = useState<number[]>([])
+  const [wishlistLoading, setWishlistLoading] = useState(true)
+  const [wishlistToast, setWishlistToast] = useState<string | null>(null)
+  const [storeSettings, setStoreSettings] = useState<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
+
+  const [sessionId] = useState(() => {
+  const existing = localStorage.getItem('wishlist_session_id')
+
+  if (existing) {
+    return existing
+  }
+
+  const newId = crypto.randomUUID()
+  localStorage.setItem('wishlist_session_id', newId)
+
+  return newId
+})
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart))
+    } catch (error) {
+      console.error('Unable to persist cart:', error)
+    }
+  }, [cart])
+
+  const setPage = (nextPage: Page) => {
+    const destination = nextPage === 'wishlist' && !customerSession ? 'account-sign-in' : nextPage
+    if (destination === page) return
+    window.history.pushState({ page: destination }, '', `#${destination}`)
+    setPageState(destination)
+  }
+
+  useEffect(() => {
+    const loadPublicStoreSettings = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/settings', {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        })
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) throw new Error(data.message || 'Unable to load store settings.')
+        setStoreSettings(storeSettingsFromApi(data))
+      } catch (error) {
+        console.error('Error loading public store settings:', error)
+      }
+    }
+
+    void loadPublicStoreSettings()
+  }, [])
+
+  useEffect(() => {
+    if (!customerSession) return
+
+    let active = true
+    void fetch('http://127.0.0.1:8000/api/customer/user', {
+      headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
+    }).then(response => {
+      if (active && (response.status === 401 || response.status === 403)) {
+        sessionStorage.removeItem(CUSTOMER_SESSION_KEY)
+        setCustomerSession(null)
+      }
+    }).catch(() => undefined)
+
+    return () => { active = false }
+  }, [customerSession?.token])
+
+  const handleAdminLoginSuccess = (session: AdminAuthSession, rememberMe: boolean) => {
+    if (rememberMe) {
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session))
+      sessionStorage.removeItem(ADMIN_SESSION_KEY)
+    } else {
+      sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session))
+      localStorage.removeItem(ADMIN_SESSION_KEY)
+    }
+    setAdminSession(session)
+    setPage('admin-dashboard')
+  }
+
+  const handleCustomerLoginSuccess = (session: CustomerAuthSession) => {
+    setWishlist([])
+    setWishlistLoading(true)
+    sessionStorage.setItem(CUSTOMER_SESSION_KEY, JSON.stringify(session))
+    setCustomerSession(session)
+    setPage('account')
+  }
+
+  const openCustomerOrder = (orderNumber: string) => {
+    setLastOrderNumber(orderNumber)
+    setPage('order-tracking')
+  }
+
+  const handleCustomerProfileUpdated = (user: CustomerAuthSession['user']) => {
+    if (!customerSession) return
+
+    const updatedSession = { ...customerSession, user }
+    sessionStorage.setItem(CUSTOMER_SESSION_KEY, JSON.stringify(updatedSession))
+    setCustomerSession(updatedSession)
+  }
+
+  const logoutCustomer = async () => {
+    const session = customerSession
+    sessionStorage.removeItem(CUSTOMER_SESSION_KEY)
+    setWishlist([])
+    setWishlistLoading(false)
+    setCustomerSession(null)
+    setPage('account-sign-in')
+
+    if (session) {
+      try {
+        await fetch('http://127.0.0.1:8000/api/customer/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.token}`, Accept: 'application/json' },
+        })
+      } catch (error) {
+        console.error('Customer sign-out error:', error)
+      }
+    }
+  }
+
+  const logoutAdmin = async () => {
+    if (adminSession) {
+      try {
+        await fetch('http://127.0.0.1:8000/api/admin/logout', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${adminSession.token}`, 'Accept': 'application/json' },
+        })
+      } catch (error) {
+        console.error('Admin sign-out error:', error)
+      }
+    }
+
+    localStorage.removeItem(ADMIN_SESSION_KEY)
+    sessionStorage.removeItem(ADMIN_SESSION_KEY)
+    setAdminSession(null)
+    setPage('admin-login')
+  }
+
+  const addToCart = (p: Product) => {
+    setCart(c => {
+      const ex = c.find(i => i.id === p.id)
+      return ex ? c.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i) : [...c, { ...p, qty: 1 }]
+    })
+  }
+
+  const syncWishlistButtons = (productId: number, active: boolean) => {
+    const buttons = document.querySelectorAll<HTMLButtonElement>(`.wishlist-btn[data-product-id="${productId}"]`)
+    buttons.forEach(button => {
+      button.dataset.active = String(active)
+      button.setAttribute('aria-label', active ? 'Remove from wishlist' : 'Add to wishlist')
+      button.classList.toggle('is-active', active)
+      const icon = button.querySelector('svg')
+      if (icon) {
+        icon.setAttribute('fill', active ? '#7A0C32' : 'none')
+        icon.setAttribute('stroke', '#fff')
+      }
+    })
+  }
+
+  const showWishlistToast = (message: string) => {
+    setWishlistToast(message)
+    window.clearTimeout((showWishlistToast as any)._timer)
+    ;(showWishlistToast as any)._timer = window.setTimeout(() => setWishlistToast(null), 1800)
+  }
+
+  const getGuestWishlist = () => {
+    try {
+      const raw = window.localStorage.getItem('yaale_guest_wishlist')
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed.filter((item): item is number => typeof item === 'number' && Number.isFinite(item)) : []
+    } catch (error) {
+      console.error('Unable to read guest wishlist:', error)
+      return []
+    }
+  }
+
+  const setGuestWishlist = (ids: number[]) => {
+    try {
+      window.localStorage.setItem('yaale_guest_wishlist', JSON.stringify(ids))
+    } catch (error) {
+      console.error('Unable to persist guest wishlist:', error)
+    }
+  }
+
+  const toggleWishlist = async (id: number) => {
+    const isWishlisted = wishlist.includes(id)
+    const nextState = !isWishlisted
+
+    syncWishlistButtons(id, nextState)
+    setWishlist(prev => nextState ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter(item => item !== id))
+
+    if (!customerSession) {
+      const guestWishlist = getGuestWishlist()
+      const nextGuestWishlist = guestWishlist.includes(id)
+        ? guestWishlist.filter(item => item !== id)
+        : [...guestWishlist, id]
+      setGuestWishlist(nextGuestWishlist)
+      showWishlistToast(nextState ? 'Added to wishlist' : 'Removed')
+      return
+    }
+
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${customerSession.token}`,
+      Accept: 'application/json',
+      'X-CSRF-TOKEN': csrfToken,
+    }
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/customer/wishlist', {
+        method: nextState ? 'POST' : 'DELETE',
+        headers: nextState ? { ...headers, 'Content-Type': 'application/json' } : headers,
+        body: nextState ? JSON.stringify({ product_id: id }) : undefined,
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '')
+        console.error('Wishlist request failed:', response.status, response.statusText, errorText)
+        throw new Error(errorText || 'Wishlist request failed')
+      }
+
+      if (nextState) {
+        setWishlist(prev => (prev.includes(id) ? prev : [...prev, id]))
+      } else {
+        setWishlist(prev => prev.filter(item => item !== id))
+      }
+
+      showWishlistToast(nextState ? 'Added to wishlist' : 'Removed')
+    } catch (error) {
+      console.error('Wishlist error:', error)
+      syncWishlistButtons(id, isWishlisted)
+      setWishlist(prev => isWishlisted ? [...new Set([...prev, id])] : prev.filter(item => item !== id))
+    }
+  }
+
+  useEffect(() => {
+    const handleWishlistDelegation = (event: Event) => {
+      const target = event.target as HTMLElement | null
+      const button = target?.closest('.wishlist-btn') as HTMLButtonElement | null
+      if (!button) return
+      event.preventDefault()
+      event.stopPropagation()
+      const productId = Number(button.dataset.productId)
+      if (!Number.isFinite(productId)) return
+      void toggleWishlist(productId)
+    }
+
+    document.addEventListener('click', handleWishlistDelegation, true)
+    return () => document.removeEventListener('click', handleWishlistDelegation, true)
+  }, [toggleWishlist])
+
+  useEffect(() => {
+    const initialPage = window.location.hash.slice(1) as Page
+    const validPages: Page[] = ['home', 'shop', 'product', 'cart', 'wishlist', 'account', 'account-sign-in', 'checkout', 'order-success', 'order-tracking', 'about', 'contact', 'admin-login', 'admin-dashboard']
+    const requestedPage = validPages.includes(initialPage) ? initialPage : 'home'
+    const startingPage = requestedPage === 'wishlist' && !customerSession ? 'account-sign-in' : requestedPage
+    setPageState(startingPage)
+    window.history.replaceState({ page: startingPage }, '', `#${startingPage}`)
+
+    const handlePopState = () => {
+      const previousPage = window.location.hash.slice(1) as Page
+      const requestedPage = validPages.includes(previousPage) ? previousPage : 'home'
+      setPageState(requestedPage === 'wishlist' && !customerSession ? 'account-sign-in' : requestedPage)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+const refreshProducts = async () => {
+  setProductsLoading(true)
+  setProductsError('')
+
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/products')
+    if (!response.ok) {
+      throw new Error('Failed to fetch products')
+    }
+
+    const data = await response.json()
+    if (!Array.isArray(data)) {
+      throw new Error('The products response was invalid')
+    }
+
+    const mappedProducts: Product[] = data.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        price: Number(p.price),
+        originalPrice: p.original_price !== null
+          ? Number(p.original_price)
+          : undefined,
+          discount: p.discount !== null
+  ? Number(p.discount)
+  : 0,
+
+stock: Number(p.stock) || 0,
+        image: productImageUrl(p.image),
+    images: Array.isArray(p.images)
+  ? p.images
+      .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
+      .filter(Boolean)
+  : [],
+        badge: p.badge ?? undefined,
+        fabric: p.fabric ?? '',
+        color: p.color ?? '',
+        sku: p.sku ?? '',
+        inStock: Boolean(p.in_stock),
+        description: p.description ?? undefined,
+        returnExchange: p.return_exchange ?? undefined,
+        manufacturedBy: p.manufactured_by ?? undefined,
+        marketedBy: p.marketed_by ?? undefined,
+      }))
+
+    setProducts(mappedProducts)
+  } catch (error) {
+    console.error('Error fetching products:', error)
+    setProductsError(error instanceof Error ? error.message : 'Failed to fetch products')
+    throw error
+  } finally {
+    setProductsLoading(false)
+  }
+}
+
+useEffect(() => {
+  void refreshProducts().catch(() => {})
+}, [customerSession])
+
+useEffect(() => {
+  const loadVideos = async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/videos')
+      if (!response.ok) {
+        throw new Error('Unable to load videos.')
+      }
+
+      const data = await response.json()
+      if (!Array.isArray(data)) {
+        throw new Error('Unable to load videos.')
+      }
+
+      const storageUrl = (path: string | null | undefined) => {
+        if (!path) return ''
+        if (/^https?:\/\//i.test(path)) return path
+        return `http://127.0.0.1:8000/storage/${path.replace(/^\/+/, '')}`
+      }
+
+      const mappedVideos: EditorialVideo[] = data.map((video: {
+        id: number
+        title: string
+        video: string
+        poster?: string | null
+      }) => ({
+        id: video.id,
+        title: video.title,
+        src: storageUrl(video.video),
+        poster: storageUrl(video.poster),
+      }))
+
+      setVideos(current => {
+        const fetchedIds = new Set(mappedVideos.map(video => video.id))
+        return [...mappedVideos, ...current.filter(video => !fetchedIds.has(video.id))]
+      })
+    } catch (error) {
+      console.error('Error fetching videos:', error)
+      setVideosError(error instanceof Error ? error.message : 'Unable to load videos.')
+    } finally {
+      setVideosLoading(false)
+    }
+  }
+
+  loadVideos()
+}, [])
+
+useEffect(() => {
+  let active = true
+
+  const loadWishlist = async () => {
+    if (!customerSession) {
+      setWishlist([])
+      setWishlistLoading(false)
+      return
+    }
+
+    setWishlistLoading(true)
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/customer/wishlist', {
+        headers: {
+          'X-Session-ID': sessionId,
+          Authorization: `Bearer ${customerSession.token}`,
+          Accept: 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to load wishlist')
+      }
+
+      const data = await response.json()
+      if (active) setWishlist(data.map((item: { product_id: number }) => Number(item.product_id)))
+    } catch (error) {
+      console.error('Failed to load wishlist:', error)
+    } finally {
+      if (active) setWishlistLoading(false)
+    }
+  }
+
+  void loadWishlist()
+  return () => { active = false }
+}, [sessionId, customerSession?.token])
+
+useEffect(() => {
+  if (!customerSession && page === 'wishlist') setPage('account-sign-in')
+}, [customerSession, page])
+
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }) }, [page])
+
+  const isAdmin = page === 'admin-login' || page === 'admin-dashboard'
+
+  return (
+    <ProductsContext.Provider value={{ products, setProducts, productsLoading, productsError, refreshProducts, videos, setVideos, videosLoading, videosError, setVideosError }}>
+      <StoreSettingsContext.Provider value={storeSettings}>
+      <div className="min-h-screen">
+      {!isAdmin && (
+        <>
+          <AnnouncementBar />
+          <Header page={page} setPage={setPage} cartCount={cart.reduce((s, i) => s + i.qty, 0)} wishlistCount={wishlist.length} customerSession={customerSession} onCustomerLogout={logoutCustomer} />
+        </>
+      )}
+
+      <div key={page} className="page-transition">
+        {page === 'home' && ( <HomePage setPage={setPage} setSelectedProduct={setSelectedProduct}
+    onAdd={addToCart}
+    onWishlist={toggleWishlist}
+    wishlist={wishlist}
+    onCategorySelect={setShopFilter}
+  />
+)}
+        {page === 'shop' && (
+  <ShopPage
+    setPage={setPage}
+    setSelectedProduct={setSelectedProduct}
+    onAdd={addToCart}
+    onWishlist={toggleWishlist}
+    wishlist={wishlist}
+    filter={shopFilter}
+    setFilter={setShopFilter}
+  />
+)}
+{page === 'product' && (
+  <ProductPage
+    setPage={setPage}
+    product={selectedProduct}
+    onAdd={addToCart}
+    onWishlist={toggleWishlist}
+    wishlist={wishlist}
+  />
+)}
+        {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={setPage} />}
+        {page === 'wishlist' && <WishlistPage wishlist={wishlist} isLoading={wishlistLoading} onWishlist={toggleWishlist} onAdd={addToCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />}
+        {page === 'checkout' && (
+          <CheckoutPage
+            setPage={setPage}
+            cart={cart}
+            setCart={setCart}
+            setLastOrderNumber={setLastOrderNumber}
+            customerToken={customerSession?.token ?? null}
+          />
+        )}
+        {page === 'order-success' && (
+  <OrderSuccessPage
+    setPage={setPage}
+    orderNumber={lastOrderNumber}
+  />
+)}
+        {page === 'order-tracking' && <OrderTrackingPage setPage={setPage} orderNumber={lastOrderNumber} customerSession={customerSession} />}
+        {(page === 'account' || page === 'account-sign-in') && (
+          <AccountPage
+            setPage={setPage}
+            customerSession={customerSession}
+            onCustomerLoginSuccess={handleCustomerLoginSuccess}
+            onCustomerProfileUpdated={handleCustomerProfileUpdated}
+            onCustomerLogout={logoutCustomer}
+            onTrackOrder={openCustomerOrder}
+            isSignIn={page === 'account-sign-in'}
+          />
+        )}
+        {page === 'about' && <AboutPage setPage={setPage} />}
+        {page === 'contact' && <ContactPage setPage={setPage} storeSettings={storeSettings} />}
+        {page === 'admin-login' && <AdminLoginPage setPage={setPage} onLoginSuccess={handleAdminLoginSuccess} />}
+        {page === 'admin-dashboard' && <AdminDashboardPage setPage={setPage} adminSession={adminSession} onLogout={logoutAdmin} globalStoreSettings={storeSettings} setGlobalStoreSettings={setStoreSettings} />}
+      </div>
+      </div>
+      </StoreSettingsContext.Provider>
+    </ProductsContext.Provider>
+  )
+}

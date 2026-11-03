@@ -1,0 +1,10 @@
+{
+  "description": "Create stunning responsive websites with creative round shape cards, smooth navigation, and elegant colors, perfect for enhancing user engagement.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
