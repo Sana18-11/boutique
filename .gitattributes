@@ -144,3 +144,13 @@
 *.stl                filter=lfs diff=lfs merge=lfs -text
 *.nc                 filter=lfs diff=lfs merge=lfs -text
 *.mat                filter=lfs diff=lfs merge=lfs -text
+
+# Keep frontend website images directly in Git (not Git LFS)
+public/*.webp -filter -diff -merge text
+public/*.png -filter -diff -merge text
+public/*.jpg -filter -diff -merge text
+public/*.jpeg -filter -diff -merge text
+src/assets/*.webp -filter -diff -merge text
+src/assets/*.png -filter -diff -merge text
+src/assets/*.jpg -filter -diff -merge text
+src/assets/*.jpeg -filter -diff -merge text
