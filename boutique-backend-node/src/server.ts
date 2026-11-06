@@ -237,6 +237,9 @@ const validateAddressLengths = (fields: {
   return tooLong ? `The ${tooLong} is too long.` : null;
 };
 
+/** Days from order to expected delivery (same as the Laravel backend and the frontend). */
+const DELIVERY_TIMELINE_DAYS = 6;
+
 /** Shipping defaults used when the admin has not set them in store settings. */
 const DEFAULT_SHIPPING_FEE = 250;
 const DEFAULT_FREE_SHIPPING_THRESHOLD = 10000;
@@ -1713,10 +1716,15 @@ app.put("/api/admin/categories/:id", authenticateAdmin, async (req, res) => {
       }
     }
 
-    const category = await prisma.category.update({
+    const newName = name !== undefined ? name.trim() : undefined;
+
+    // Products store the category by name, so a rename must carry them along;
+    // otherwise they keep the old name and drop out of the renamed category.
+    const [category] = await prisma.$transaction([
+      prisma.category.update({
       where: { id: categoryId },
       data: {
-        name: name !== undefined ? name.trim() : undefined,
+        name: newName,
         description:
           description !== undefined
             ? description === null || description === ""
@@ -1725,7 +1733,16 @@ app.put("/api/admin/categories/:id", authenticateAdmin, async (req, res) => {
             : undefined,
         isActive: isActive !== undefined ? isActive : undefined,
       },
-    });
+      }),
+      prisma.product.updateMany({
+        where: {
+          category: existingCategory.name,
+        },
+        data: {
+          category: newName ?? existingCategory.name,
+        },
+      }),
+    ]);
 
     return res.json({
       id: category.id.toString(),
@@ -3512,19 +3529,30 @@ app.get("/api/my-orders/:id", authenticateCustomer, async (req, res) => {
 
 app.get("/api/products", async (req, res) => {
   try {
-    const products = await prisma.product.findMany({
-      where: {
-        isActive: true,
-      },
-      include: {
-        images: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const [products, sales] = await Promise.all([
+      prisma.product.findMany({
+        where: {
+          isActive: true,
+        },
+        include: {
+          images: true,
+        },
+        orderBy: {
+          id: "desc",
+        },
+      }),
+      // Units sold per product, ignoring cancelled orders (used for "Best Selling").
+      prisma.orderItem.groupBy({
+        by: ["productId"],
+        _sum: { quantity: true },
+        where: { order: { status: { not: "Cancelled" } } },
+      }),
+    ]);
+
+    const soldByProduct = new Map(sales.map((row) => [row.productId, row._sum.quantity ?? 0]));
 
     const formattedProducts = products.map((p) => ({
+      sold_count: soldByProduct.get(p.id) ?? 0,
       id: p.id.toString(),
       name: p.name,
       description: p.description,
@@ -3726,45 +3754,62 @@ app.get("/api/products/:id", async (req, res) => {
 
 app.get("/api/admin/dashboard", authenticateAdmin, async (req, res) => {
   try {
-    const [productCount, orderCount, customerCount, products, orders] = await Promise.all([
-      prisma.product.count(),
-      prisma.order.count(),
-      prisma.user.count({
-        where: {
-          isAdmin: false,
-        },
-      }),
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const isThisMonth = (date: Date | null) => !!date && date >= monthStart;
+
+    const [products, orders, customers] = await Promise.all([
       prisma.product.findMany({
         select: {
           stock: true,
+          createdAt: true,
         },
       }),
       prisma.order.findMany({
         select: {
           status: true,
           totalAmount: true,
+          createdAt: true,
+        },
+      }),
+      prisma.user.findMany({
+        where: {
+          isAdmin: false,
+        },
+        select: {
+          createdAt: true,
         },
       }),
     ]);
 
-    const totalSalesAmount = orders.reduce((sum, order) => sum + Number(order.totalAmount ?? 0), 0);
+    // Cancelled orders are not sales.
+    const liveOrders = orders.filter((order) => order.status !== "Cancelled");
+    const sumAmounts = (list: typeof orders) =>
+      list.reduce((sum, order) => sum.add(order.totalAmount ?? 0), new Prisma.Decimal(0)).toNumber();
+
+    const totalSalesAmount = sumAmounts(liveOrders);
+    const monthSalesAmount = sumAmounts(liveOrders.filter((order) => isThisMonth(order.createdAt)));
+    const ordersThisMonth = orders.filter((order) => isThisMonth(order.createdAt)).length;
+    const productsThisMonth = products.filter((product) => isThisMonth(product.createdAt)).length;
+    const customersThisMonth = customers.filter((customer) => isThisMonth(customer.createdAt)).length;
     const pendingOrderCount = orders.filter((order) => (order.status ?? "").toLowerCase() === "pending").length;
     const lowStockCount = products.filter((product) => (product.stock ?? 0) <= 5).length;
     const outOfStockCount = products.filter((product) => (product.stock ?? 0) <= 0).length;
+    const rupees = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
 
     return res.json({
       total_sarees: {
-        count: productCount,
-        change: productCount > 0 ? `+${productCount} in collection` : "0 this month",
+        count: products.length,
+        change: `+${productsThisMonth} this month`,
       },
       total_orders: {
-        count: orderCount,
-        change: orderCount > 0 ? `+${orderCount} total` : "0 this week",
+        count: orders.length,
+        change: `+${ordersThisMonth} this month`,
       },
       total_sales: {
         amount: totalSalesAmount,
-        formatted: `₹${totalSalesAmount.toLocaleString("en-IN")}`,
-        change: totalSalesAmount > 0 ? `₹${totalSalesAmount.toLocaleString("en-IN")} total` : "₹0 this month",
+        formatted: rupees(totalSalesAmount),
+        change: `${rupees(monthSalesAmount)} this month`,
       },
       pending_orders: {
         count: pendingOrderCount,
@@ -3774,11 +3819,11 @@ app.get("/api/admin/dashboard", authenticateAdmin, async (req, res) => {
       low_stock: {
         count: lowStockCount,
         out_of_stock: outOfStockCount,
-        change: lowStockCount > 0 ? `${lowStockCount} items low` : "Stock healthy",
+        change: lowStockCount > 0 ? `${lowStockCount} items low, ${outOfStockCount} out` : "Stock healthy",
       },
       customers: {
-        count: customerCount,
-        change: customerCount > 0 ? `+${customerCount} total` : "0 new",
+        count: customers.length,
+        change: `+${customersThisMonth} this month`,
       },
     });
   } catch (error) {
@@ -3946,6 +3991,13 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       });
     }
 
+    // Each item costs database work inside the order transaction; cap the size.
+    if (items.length > 50) {
+      return res.status(422).json({
+        message: "An order can contain at most 50 different items.",
+      });
+    }
+
     const quantitiesByProduct = new Map<bigint, number>();
 
     for (const item of items) {
@@ -4010,7 +4062,8 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
         });
       }
 
-      if (!product.isActive) {
+      // Same rule as the storefront: buyable only when visible, marked in stock, and units remain.
+      if (!product.isActive || !product.inStock) {
         return res.status(422).json({
           message: `Product ${product.name} is currently unavailable.`,
         });
@@ -4060,6 +4113,7 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
           where: {
             id: productId,
             isActive: true,
+            inStock: true,
             stock: {
               gte: quantity,
             },
@@ -4087,6 +4141,7 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
           totalAmount: new Prisma.Decimal(totalAmount.toFixed(2)),
           status: "Pending",
           paymentStatus: "Pending",
+          expectedDeliveryDate: new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 24 * 60 * 60 * 1000),
         },
       });
 
@@ -4180,7 +4235,9 @@ if (typeof rawOrderId !== "string" || !/^\d+$/.test(rawOrderId)) {
 }
 
 const orderId = BigInt(rawOrderId);
-    const { status, note } = req.body;
+    const { note } = req.body;
+    const requestedStatus = req.body.status;
+    const paymentStatus = req.body.paymentStatus ?? req.body.payment_status;
 
     const allowedStatuses = [
       "Pending",
@@ -4192,9 +4249,24 @@ const orderId = BigInt(rawOrderId);
       "Cancelled",
     ];
 
-    if (!allowedStatuses.includes(status)) {
+    // No payment gateway is connected, so the admin records payment by hand.
+    const allowedPaymentStatuses = ["Pending", "Paid", "Failed", "Refunded"];
+
+    if (requestedStatus === undefined && paymentStatus === undefined) {
+      return res.status(422).json({
+        message: "Provide an order status or a payment status.",
+      });
+    }
+
+    if (requestedStatus !== undefined && !allowedStatuses.includes(requestedStatus)) {
       return res.status(422).json({
         message: "Invalid order status.",
+      });
+    }
+
+    if (paymentStatus !== undefined && !allowedPaymentStatuses.includes(paymentStatus)) {
+      return res.status(422).json({
+        message: "Invalid payment status.",
       });
     }
 
@@ -4217,6 +4289,9 @@ const orderId = BigInt(rawOrderId);
         message: "Order not found.",
       });
     }
+
+    // A payment-only update keeps the current order status.
+    const status: string = requestedStatus ?? existingOrder.status;
 
     // A cancelled order has already returned its stock. Re-opening it would need
     // that stock reserved again, so it is not allowed; place a new order instead.
@@ -4248,10 +4323,20 @@ const orderId = BigInt(rawOrderId);
         });
       }
     }
+
+    if (paymentStatus !== undefined) {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { paymentStatus },
+      });
+    }
   } else {
     await tx.order.update({
       where: { id: orderId },
-      data: { status },
+      data: {
+        status,
+        ...(paymentStatus !== undefined ? { paymentStatus } : {}),
+      },
     });
   }
 

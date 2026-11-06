@@ -7,7 +7,17 @@ import { defineConfig, env } from "prisma/config";
 export default defineConfig({
   schema: "prisma/schema.prisma",
   datasource: {
-    url: env("DATABASE_URL"),
+    // Prisma CLI commands (migrate, studio, db pull) use the direct, non-pooled
+    // connection: migrate takes a Postgres advisory lock, which does not work
+    // reliably through Neon's connection pooler. The running app keeps using the
+    // pooled DATABASE_URL (see src/server.ts). Falls back to DATABASE_URL when
+    // DIRECT_URL is not set. When neither is set (e.g. a CI build), the URL is left
+    // out: `prisma generate` does not need a database, and commands that do
+    // (migrate, studio) report the missing URL themselves.
+    ...(process.env.DIRECT_URL
+      ? { url: env("DIRECT_URL") }
+      : process.env.DATABASE_URL
+      ? { url: env("DATABASE_URL") }
+      : {}),
   },
 });
-

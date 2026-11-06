@@ -26,7 +26,9 @@ declare global {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard'
-type ShopCategoryFilter = 'ALL' | 'Soft Silk' | 'Cotton' | 'Semi Silk'
+// 'ALL' or any category name. Category names come from the admin's categories,
+// so they are not fixed in the code.
+type ShopCategoryFilter = string
 
 const normalizeCategory = (category: string) => category.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 const CONTACT_ADDRESS = '10/2A, Thirumalai Gounder St, Palakarath Thottam, Salem, Ellampilai - 637502'
@@ -75,6 +77,63 @@ const productImageUrl = (image: unknown) => {
   return storagePath ? `${API_BASE_URL}/storage/${storagePath}` : ''
 }
 
+/**
+ * Convert a product from the API into the frontend's Product shape. The API sends
+ * ids as strings ("9"); they are converted to numbers here, once, so every
+ * comparison (cart, wishlist, admin lists) works with the same type.
+ */
+const mapApiProduct = (p: any): Product => ({
+  id: Number(p.id),
+  name: p.name,
+  category: p.category,
+  price: Number(p.price),
+  originalPrice: p.original_price !== null && p.original_price !== undefined ? Number(p.original_price) : undefined,
+  discount: p.discount !== null && p.discount !== undefined ? Number(p.discount) : 0,
+  stock: Number(p.stock) || 0,
+  image: productImageUrl(p.image),
+  images: Array.isArray(p.images)
+    ? p.images
+        .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
+        .filter(Boolean)
+    : [],
+  badge: p.badge ?? undefined,
+  fabric: p.fabric ?? '',
+  color: p.color ?? '',
+  sku: p.sku ?? '',
+  length: p.length ?? '',
+  blouse: p.blouse ?? '',
+  occasion: p.occasion ?? '',
+  inStock: Boolean(p.in_stock),
+  isActive: p.is_active === undefined ? true : Boolean(p.is_active),
+  soldCount: Number(p.sold_count) || 0,
+  description: p.description ?? undefined,
+  returnExchange: p.return_exchange ?? undefined,
+  manufacturedBy: p.manufactured_by ?? undefined,
+  marketedBy: p.marketed_by ?? undefined,
+})
+
+/** Expiry time (ms since epoch) from a JWT's `exp` claim, or null if it cannot be read. */
+const tokenExpiryMs = (token: string | undefined | null): number | null => {
+  try {
+    const payload = token?.split('.')[1]
+    if (!payload) return null
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof json.exp === 'number' ? json.exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
+/** Badge colours for an order's payment status. */
+const paymentStatusColor = (status: string | null | undefined) => ({
+  Paid: 'bg-green-50 text-green-700',
+  Failed: 'bg-red-50 text-red-700',
+  Refunded: 'bg-blue-50 text-blue-700',
+}[status ?? ''] ?? 'bg-yellow-50 text-yellow-700')
+
+/** A product can be bought only when it is marked in stock AND has units left. */
+const isPurchasable = (p: Pick<Product, 'inStock' | 'stock'>) => p.inStock && (p.stock ?? 0) > 0
+
 const getProductMainImage = (p: Partial<Product> | null | undefined): string => {
   if (!p) return '/yaale-logo-transparent.png'
   if (p.image) {
@@ -109,6 +168,9 @@ stock?: number
 blouse?: string
 occasion?: string
   inStock: boolean
+  isActive?: boolean
+  /** Units sold in orders that were not cancelled (for "Best Selling"). */
+  soldCount?: number
   description?: string
   returnExchange?: string
   manufacturedBy?: string
@@ -510,7 +572,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
           <HeartIcon filled={inWish} size={shopCard ? 24 : 14} />
         </button>
 
-        {p.inStock && (
+        {isPurchasable(p) && (
           <div className={`absolute inset-x-0 bottom-0 p-3 transition-all duration-300 ${hovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
             <button onClick={e => { e.stopPropagation(); onAdd(p) }}
               className="w-full bg-charcoal/90 backdrop-blur-sm text-champagne text-xs tracking-widest uppercase py-2.5 rounded-2xl hover:bg-charcoal transition-colors">
@@ -518,7 +580,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
             </button>
           </div>
         )}
-        {!p.inStock && (
+        {!isPurchasable(p) && (
           <div className="absolute inset-x-3 bottom-3">
             <div className="w-full bg-warm-gray/70 backdrop-blur-sm text-white text-xs tracking-widest uppercase py-2.5 rounded-2xl text-center">
               Out of Stock
@@ -906,6 +968,31 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
   const [filterOpen, setFilterOpen] = useState(false)
   const [priceRange, setPriceRange] = useState('All Prices')
   const [sort, setSort] = useState('Newest')
+  const [apiCategories, setApiCategories] = useState<string[]>([])
+
+  // Active categories set up by the admin.
+  useEffect(() => {
+    let active = true
+    fetch(`${API_BASE_URL}/api/categories`, { headers: { Accept: 'application/json' } })
+      .then(response => response.ok ? response.json() : [])
+      .then(data => {
+        if (active && Array.isArray(data)) {
+          setApiCategories(data.map((c: { name?: unknown }) => String(c.name ?? '')).filter(Boolean))
+        }
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
+  // Admin categories plus any category a product uses, without duplicates.
+  const categoryOptions = (() => {
+    const seen = new Map<string, string>()
+    for (const name of [...apiCategories, ...products.map(p => p.category)]) {
+      const key = normalizeCategory(name ?? '')
+      if (key && !seen.has(key)) seen.set(key, name.trim())
+    }
+    return ['ALL', ...seen.values()]
+  })()
 
   const filtered = (filter === 'ALL' ? products : products.filter(p => normalizeCategory(p.category) === normalizeCategory(filter)))
     .filter(p => priceRange === 'All Prices' ||
@@ -913,7 +1000,12 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
       (priceRange === '₹5,000 - ₹10,000' && p.price >= 5000 && p.price <= 10000) ||
       (priceRange === 'Above ₹10,000' && p.price > 10000))
     .slice()
-    .sort((a, b) => sort === 'Price: Low to High' ? a.price - b.price : sort === 'Price: High to Low' ? b.price - a.price : 0)
+    .sort((a, b) => {
+      if (sort === 'Price: Low to High') return a.price - b.price
+      if (sort === 'Price: High to Low') return b.price - a.price
+      if (sort === 'Best Selling') return (b.soldCount ?? 0) - (a.soldCount ?? 0) || b.id - a.id
+      return b.id - a.id // Newest: ids increase as sarees are added
+    })
 
   useEffect(() => {
     const cards = document.querySelectorAll<HTMLElement>('.shop-product-card')
@@ -963,9 +1055,9 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
                 <div className="mb-5">
                   <p className="mb-2 text-[10px] tracking-[0.2em] uppercase text-warm-gray">Category</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {(['ALL', 'Soft Silk', 'Cotton', 'Semi Silk'] as const).map(category => (
+                    {categoryOptions.map(category => (
                       <button key={category} onClick={() => setFilter(category)}
-                        className={`rounded-xl px-3 py-2 text-left text-xs transition-colors ${filter === category ? 'bg-charcoal text-champagne' : 'bg-cream text-warm-gray hover:bg-cream'}`}>
+                        className={`rounded-xl px-3 py-2 text-left text-xs transition-colors ${normalizeCategory(filter) === normalizeCategory(category) ? 'bg-charcoal text-champagne' : 'bg-cream text-warm-gray hover:bg-cream'}`}>
                         {category === 'ALL' ? 'All Sarees' : category}
                       </button>
                     ))}
@@ -1032,12 +1124,13 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
 function ProductPage({ setPage, product, onAdd, onWishlist, wishlist }: {
   setPage: (p: Page) => void
   product: Product | null
-  onAdd: (p: Product) => void
+  onAdd: (p: Product, qty?: number) => void
   onWishlist: (id: number) => void
   wishlist: number[]
 }) {
-  const { products } = useProductsStore()
-const p = product ?? products[0]
+  const { productsLoading } = useProductsStore()
+// No fallback to another product: showing the wrong saree is worse than "not found".
+const p = product
 
 const [qty, setQty] = useState(1)
 const [addedToBag, setAddedToBag] = useState(false)
@@ -1050,9 +1143,29 @@ const [openSection, setOpenSection] = useState<string | null>('Product Descripti
 const mainImg = p ? getProductMainImage(p) : ''
 const [selectedImage, setSelectedImage] = useState(mainImg)
 
+// Reset the gallery and quantity when a different saree is opened (or it loads after a refresh).
+useEffect(() => {
+  setSelectedImage(mainImg)
+  setQty(1)
+  setDelivery(null)
+}, [p?.id])
+
 if (!p) {
-  return <div>Loading product...</div>
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 px-6 text-center">
+      {productsLoading ? (
+        <p className="text-sm text-warm-gray">Loading saree...</p>
+      ) : (
+        <>
+          <p className="font-serif text-2xl text-charcoal">This saree is no longer available.</p>
+          <button onClick={() => setPage('shop')} className="rounded-full bg-charcoal px-6 py-3 text-xs uppercase tracking-widest text-champagne">Browse Sarees</button>
+        </>
+      )}
+    </div>
+  )
 }
+
+const maxQty = Math.max(1, p.stock ?? 1)
 
 const inWish = wishlist.includes(p.id)
 
@@ -1070,8 +1183,13 @@ const inWish = wishlist.includes(p.id)
   const allImages = rawImages.filter(u => !u.includes('yaale-logo'))
 
   const checkDelivery = () => {
-    if (pincode.length === 6) setDelivery(`Estimated delivery: ${new Date(Date.now() + 5 * 864e5).toDateString()}`)
-    else setDelivery('Please enter a valid 6-digit pincode.')
+    // Indian PIN codes are 6 digits and never start with 0. Delivery is pan-India,
+    // so every valid PIN gets the standard estimate.
+    if (/^[1-9]\d{5}$/.test(pincode.trim())) {
+      setDelivery(`We deliver to ${pincode.trim()}. Estimated delivery by ${new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 864e5).toDateString()}.`)
+    } else {
+      setDelivery('Please enter a valid 6-digit pincode.')
+    }
   }
 
   const sections = [
@@ -1156,7 +1274,7 @@ const inWish = wishlist.includes(p.id)
                 ['Length', p.length || 'Not specified'],
                 ['Blouse', p.blouse || 'Not specified'],
                 ['Occasion', p.occasion || 'Not specified'],
-                ['Availability', p.inStock ? 'In Stock' : 'Out of Stock'],
+                ['Availability', isPurchasable(p) ? 'In Stock' : 'Out of Stock'],
               ].map(([k, v]) => (
                 <div key={k}>
                   <p className="text-xs tracking-wider uppercase mb-0.5" style={{ color: 'var(--text-muted)' }}>{k}</p>
@@ -1170,7 +1288,7 @@ const inWish = wishlist.includes(p.id)
               <div className="flex items-center rounded-full overflow-hidden" style={{ border: '1px solid var(--line)' }}>
                 <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>&#8722;</button>
                 <span className="px-3 text-sm font-medium" style={{ color: 'var(--text-main)' }}>{qty}</span>
-                <button onClick={() => setQty(q => q + 1)} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>+</button>
+                <button onClick={() => setQty(q => Math.min(maxQty, q + 1))} disabled={qty >= maxQty} aria-label="Increase quantity" className="px-4 py-2.5 text-lg transition-colors disabled:opacity-40" style={{ color: 'var(--text-muted)' }}>+</button>
               </div>
               {/* Heart icon — no circle */}
               <button
@@ -1208,15 +1326,17 @@ const inWish = wishlist.includes(p.id)
             {/* CTA Buttons */}
             <div className="flex gap-3 mb-6">
               <button
-                onClick={() => { onAdd(p); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
-                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors"
+                onClick={() => { onAdd(p, qty); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
+                disabled={!isPurchasable(p)}
+                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ height: '52px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
               >
-                {addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
+                {!isPurchasable(p) ? 'Out of Stock' : addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
               </button>
               <button
-                onClick={() => { onAdd(p); setPage('checkout') }}
-                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors"
+                onClick={() => { onAdd(p, qty); setPage('checkout') }}
+                disabled={!isPurchasable(p)}
+                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ height: '52px', backgroundColor: 'var(--maroon)', color: 'var(--text-on-dark)' }}
               >
                 Buy Now
@@ -1297,9 +1417,13 @@ function CartPage({ cart, setCart, setPage }: { cart: CartItem[], setCart: React
   const shipping = calculateShipping(subtotal, storeSettings)
   const total = subtotal + shipping
 
+  const { products } = useProductsStore()
+  // Latest stock from the shop list (the bag keeps a copy from when it was added).
+  const stockFor = (item: CartItem) => products.find(p => p.id === item.id)?.stock ?? item.stock ?? Infinity
+
   const updateQty = (id: number, qty: number) => {
     if (qty === 0) setCart(c => c.filter(i => i.id !== id))
-    else setCart(c => c.map(i => i.id === id ? { ...i, qty } : i))
+    else setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.min(qty, Math.max(1, stockFor(i))) } : i))
   }
 
   if (cart.length === 0) return (
@@ -1332,7 +1456,7 @@ function CartPage({ cart, setCart, setPage }: { cart: CartItem[], setCart: React
                     <div className="flex items-center border border-border rounded-full">
                       <button onClick={() => updateQty(item.id, item.qty - 1)} className="px-3 py-1 text-warm-gray hover:text-charcoal">−</button>
                       <span className="px-2 text-sm font-medium">{item.qty}</span>
-                      <button onClick={() => updateQty(item.id, item.qty + 1)} className="px-3 py-1 text-warm-gray hover:text-charcoal">+</button>
+                      <button onClick={() => updateQty(item.id, item.qty + 1)} disabled={item.qty >= stockFor(item)} aria-label="Increase quantity" className="px-3 py-1 text-warm-gray hover:text-charcoal disabled:opacity-40">+</button>
                     </div>
                     <button onClick={() => updateQty(item.id, 0)} className="text-xs text-warm-gray hover:text-wine tracking-wider uppercase ml-auto">Remove</button>
                   </div>
@@ -1964,13 +2088,17 @@ function CheckoutPage({
               ))}
             </div>
             <div className="bg-cream rounded-2xl p-4 mb-6 text-center">
-              <p className="text-xs text-warm-gray">Online Payment Only · No Cash on Delivery · Secure & Encrypted</p>
+              <p className="text-xs text-warm-gray">Online Payment Only · No Cash on Delivery</p>
+              <p className="mt-2 text-xs text-warm-gray">
+                No payment is taken on this page. Your order is placed with payment pending,
+                and we will contact you to complete payment by your chosen method.
+              </p>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setStep(2)} disabled={isPlacingOrder} className="border border-border text-warm-gray px-6 py-3.5 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:text-charcoal transition-colors disabled:opacity-50">Back</button>
               <button onClick={placeOrder} disabled={isPlacingOrder}
                 className="flex-1 bg-champagne text-charcoal py-3.5 rounded-full text-xs tracking-widest uppercase font-semibold hover:bg-charcoal hover:text-champagne transition-colors disabled:opacity-60">
-                {isPlacingOrder ? 'Processing Order...' : 'Pay Securely & Place Order'}
+                {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
               </button>
             </div>
           </div>
@@ -1999,7 +2127,7 @@ function OrderSuccessPage({
       <p className="text-warm-gray font-light mb-10 max-w-sm">Your saree is being prepared with care. You'll receive an update on WhatsApp and Email shortly.</p>
       <div className="bg-white rounded-3xl border border-border p-6 mb-10 w-full max-w-sm text-sm">
         <div className="space-y-3">
-          {[['Order Number', orderNo], ['Order Date', new Date().toDateString()], ['Payment Status', 'Paid'], ['Est. Delivery', new Date(Date.now() + 6 * 864e5).toDateString()]].map(([k, v]) => (
+          {[['Order Number', orderNo], ['Order Date', new Date().toDateString()], ['Payment Status', 'Pending'], ['Est. Delivery', new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 864e5).toDateString()]].map(([k, v]) => (
             <div key={k} className="flex justify-between">
               <span className="text-warm-gray">{k}</span>
               <span className="font-medium text-charcoal">{v}</span>
@@ -3402,7 +3530,54 @@ function AdminLoginPage({ setPage, onLoginSuccess }: { setPage: (p: Page) => voi
 }
 
 function AdminDashboardPage({ setPage, adminSession, onLogout, globalStoreSettings, setGlobalStoreSettings }: { setPage: (p: Page) => void, adminSession: AdminAuthSession | null, onLogout: () => void, globalStoreSettings: StoreSettingsForm, setGlobalStoreSettings: (settings: StoreSettingsForm) => void }) {
-  const { products, setProducts, productsLoading, productsError, refreshProducts, videos, setVideos, videosLoading, videosError, setVideosError } = useProductsStore()
+  const { refreshProducts: refreshStorefrontProducts, videos, setVideos, videosLoading, videosError, setVideosError } = useProductsStore()
+
+  // The admin works on its own product list from /api/admin/products, which includes
+  // hidden (inactive) products. The storefront list only has active ones.
+  const [products, setProducts] = useState<Product[]>([])
+  const [productsLoading, setProductsLoading] = useState(true)
+  const [productsError, setProductsError] = useState('')
+
+  const refreshProducts = async () => {
+    if (!adminSession?.token) {
+      setProducts([])
+      setProductsLoading(false)
+      return
+    }
+
+    setProductsLoading(true)
+    setProductsError('')
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/products`, {
+        headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (response.status === 401 || response.status === 403) {
+        onLogout()
+        return
+      }
+
+      if (!response.ok) throw new Error(data.message || 'Failed to load products')
+      if (!Array.isArray(data)) throw new Error('The products response was invalid')
+
+      setProducts(data.map(mapApiProduct))
+    } catch (error) {
+      console.error('Error fetching admin products:', error)
+      setProductsError(error instanceof Error ? error.message : 'Failed to load products')
+    } finally {
+      setProductsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshProducts()
+  }, [adminSession?.token])
+
+  // Changes made here (new, edited, hidden or deleted sarees) should show on the
+  // storefront when the admin leaves the dashboard.
+  useEffect(() => () => { void refreshStorefrontProducts().catch(() => {}) }, [])
   const [tab, setTab] = useState('Dashboard')
   const [editingProduct, setEditingProduct] = useState<(Product & {
   imageFile?: File | null
@@ -3548,6 +3723,36 @@ useEffect(() => {
     fetchOrders()
   }, [adminSession?.token])
 
+  // Payment is recorded by hand (no gateway is connected), so the admin can set it here.
+  const updateOrderPayment = async (order: any, paymentStatus: string) => {
+    setOrderStatusSavingId(order.id)
+    setOrderStatusErrors(current => ({ ...current, [order.id]: '' }))
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+        },
+        body: JSON.stringify({ payment_status: paymentStatus }),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) throw new Error(data.message || 'Failed to update payment status.')
+
+      setOrders(current => current.map(currentOrder => currentOrder.id === order.id ? { ...currentOrder, ...data } : currentOrder))
+      setSelectedOrder((current: any) => current?.id === order.id ? { ...current, ...data } : current)
+      void loadDashboardStats()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update payment status.'
+      setOrderStatusErrors(current => ({ ...current, [order.id]: message }))
+    } finally {
+      setOrderStatusSavingId(null)
+    }
+  }
+
   const updateOrderStatus = async (order: any, status: string) => {
     setOrderStatusSavingId(order.id)
     setOrderStatusErrors(current => ({ ...current, [order.id]: '' }))
@@ -3664,7 +3869,11 @@ imageFiles: [] as File[],
     setCategoriesError('')
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/categories`)
+      if (!adminSession?.token) return
+      // Admin list includes draft (inactive) categories; the public one does not.
+      const response = await fetch(`${API_BASE_URL}/api/admin/categories`, {
+        headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
+      })
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
@@ -3686,14 +3895,18 @@ imageFiles: [] as File[],
 
   useEffect(() => {
     void loadCategories()
-  }, [])
+  }, [adminSession?.token])
 
   const loadOffers = async () => {
     setOffersLoading(true)
     setOffersError('')
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/offers`)
+      if (!adminSession?.token) return
+      // Admin list includes scheduled and paused offers; the public one only has active ones.
+      const response = await fetch(`${API_BASE_URL}/api/admin/offers`, {
+        headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
+      })
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) throw new Error(data.message || 'Failed to load offers')
@@ -3710,7 +3923,7 @@ imageFiles: [] as File[],
 
   useEffect(() => {
     void loadOffers()
-  }, [])
+  }, [adminSession?.token])
 
   useEffect(() => {
     const loadCustomers = async () => {
@@ -4405,39 +4618,9 @@ imageFiles: [] as File[],
 
     const createdProduct = await response.json()
 
-    const mappedProduct: Product = {
-      id: createdProduct.id,
-      name: createdProduct.name,
-      category: createdProduct.category,
-      price: Number(createdProduct.price),
+    const mappedProduct: Product = mapApiProduct(createdProduct)
 
-      originalPrice:
-        createdProduct.original_price !== null
-          ? Number(createdProduct.original_price)
-          : undefined,
-
-      image: productImageUrl(createdProduct.image),
-      images: Array.isArray(createdProduct.images)
-  ? createdProduct.images
-      .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
-      .filter(Boolean)
-  : [],
-      badge: createdProduct.badge ?? undefined,
-      fabric: createdProduct.fabric ?? '',
-      color: createdProduct.color ?? '',
-      sku: createdProduct.sku ?? '',
-      length: createdProduct.length ?? '',
-blouse: createdProduct.blouse ?? '',
-occasion: createdProduct.occasion ?? '',
-      inStock: Boolean(createdProduct.in_stock),
-
-      description: createdProduct.description ?? undefined,
-      returnExchange: createdProduct.return_exchange ?? undefined,
-      manufacturedBy: createdProduct.manufactured_by ?? undefined,
-      marketedBy: createdProduct.marketed_by ?? undefined,
-    }
-
-    setProducts(current => [...current, mappedProduct])
+    setProducts(current => [mappedProduct, ...current])
     setShowAddForm(false)
 
     setSuccessMessage('Saree added successfully!')
@@ -4525,7 +4708,9 @@ const updateSaree = async () => {
     formData.append('manufacturedBy', editingProduct.manufacturedBy ?? '')
     formData.append('marketedBy', editingProduct.marketedBy ?? '')
     formData.append('inStock', editingProduct.inStock ? 'true' : 'false')
-    // isActive is deliberately not sent: editing must not un-hide a hidden product.
+    // Sends the product's own visibility (set by the "Visible in shop" checkbox),
+    // so saving an edit never un-hides a hidden product by accident.
+    formData.append('isActive', editingProduct.isActive === false ? 'false' : 'true')
 
     // Only attach a new image when the user has selected one
     if (editingProduct.imageFile) {
@@ -4554,42 +4739,12 @@ const updateSaree = async () => {
     // Node API response (formatProductResponse) uses snake_case for some fields
     const updatedProduct = await response.json()
 
+    const mappedUpdate = mapApiProduct(updatedProduct)
+
     setProducts(current =>
       current.map(product =>
-        // The API returns ids as strings; the local list stores numbers.
-        String(product.id) === String(updatedProduct.id)
-          ? {
-              ...product,
-              image: productImageUrl(updatedProduct.image) || product.image,
-              images: Array.isArray(updatedProduct.images)
-                ? updatedProduct.images
-                    .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
-                    .filter(Boolean)
-                : product.images,
-              name: updatedProduct.name,
-              sku: updatedProduct.sku,
-              category: updatedProduct.category,
-              price: Number(updatedProduct.price),
-              originalPrice:
-                updatedProduct.original_price !== null
-                  ? Number(updatedProduct.original_price)
-                  : undefined,
-              discount:
-                updatedProduct.discount !== null
-                  ? Number(updatedProduct.discount)
-                  : 0,
-              stock: Number(updatedProduct.stock) || 0,
-              fabric: updatedProduct.fabric ?? '',
-              color: updatedProduct.color ?? '',
-              length: updatedProduct.length ?? '',
-              blouse: updatedProduct.blouse ?? '',
-              occasion: updatedProduct.occasion ?? '',
-              description: updatedProduct.description ?? undefined,
-              returnExchange: updatedProduct.return_exchange ?? undefined,
-              manufacturedBy: updatedProduct.manufactured_by ?? undefined,
-              marketedBy: updatedProduct.marketed_by ?? undefined,
-              inStock: Boolean(updatedProduct.in_stock),
-            }
+        product.id === mappedUpdate.id
+          ? { ...product, ...mappedUpdate, image: mappedUpdate.image || product.image }
           : product
       )
     )
@@ -4719,7 +4874,7 @@ const updateSaree = async () => {
                           <td className="px-4 py-3 font-medium">
   ₹{Number(o.amount ?? o.total_amount ?? 0).toLocaleString('en-IN')}
 </td>
-                          <td className="px-4 py-3"><span className="bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded-full">{o.payment_status}</span></td>
+                          <td className="px-4 py-3"><span className={`${paymentStatusColor(o.payment_status)} text-xs px-2 py-0.5 rounded-full`}>{o.payment_status}</span></td>
                           <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${statusColor[o.status]}`}>{o.status}</span></td>
                           <td className="px-4 py-3 text-warm-gray">
   {o.created_at
@@ -5021,6 +5176,27 @@ const updateSaree = async () => {
             ))}
           </div>
 
+          <div className="mt-5 flex flex-wrap gap-6">
+            <label className="flex items-center gap-2 text-sm text-charcoal">
+              <input
+                type="checkbox"
+                checked={editingProduct.isActive !== false}
+                onChange={event => setEditingProduct({ ...editingProduct, isActive: event.target.checked })}
+                className="accent-wine"
+              />
+              Visible in shop
+            </label>
+            <label className="flex items-center gap-2 text-sm text-charcoal">
+              <input
+                type="checkbox"
+                checked={editingProduct.inStock}
+                onChange={event => setEditingProduct({ ...editingProduct, inStock: event.target.checked })}
+                className="accent-wine"
+              />
+              Available to buy (also needs stock above 0)
+            </label>
+          </div>
+
           <div className="mt-6 flex items-center justify-between border-t border-border pt-5">
             <button onClick={() => setEditingProduct(null)} className="text-xs tracking-[0.22em] uppercase text-warm-gray hover:text-charcoal">Cancel</button>
             <button onClick={updateSaree} className="rounded-full bg-charcoal px-6 py-3 text-[10px] tracking-[0.24em] uppercase text-champagne transition hover:bg-charcoal">Save Changes</button>
@@ -5204,6 +5380,9 @@ const updateSaree = async () => {
 />
                               </div>
                               <span className="font-medium text-charcoal">{p.name}</span>
+                              {p.isActive === false && (
+                                <span className="rounded-full bg-cream px-2 py-0.5 text-[10px] uppercase tracking-wider text-warm-gray">Hidden</span>
+                              )}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-warm-gray">{p.sku}</td>
@@ -5211,8 +5390,8 @@ const updateSaree = async () => {
                           <td className="px-4 py-3 font-medium">₹{p.price.toLocaleString('en-IN')}</td>
                           <td className="px-4 py-3 text-charcoal">{p.stock ?? 0}</td>
                           <td className="px-4 py-3">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${p.inStock ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                              {p.inStock ? 'In Stock' : 'Out of Stock'}
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${isPurchasable(p) ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                              {isPurchasable(p) ? 'In Stock' : 'Out of Stock'}
                             </span>
                           </td>
                           <td className="px-4 py-3">
@@ -5376,7 +5555,7 @@ const updateSaree = async () => {
         </td>
 
         <td className="px-4 py-3">
-          <span className="bg-yellow-50 text-yellow-700 text-xs px-2 py-0.5 rounded-full">
+          <span className={`${paymentStatusColor(o.payment_status)} text-xs px-2 py-0.5 rounded-full`}>
             {o.payment_status}
           </span>
         </td>
@@ -5874,9 +6053,23 @@ const updateSaree = async () => {
               </div>
               <div>
                 <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Payment</p>
-                <span className="mt-1 inline-flex rounded-full bg-yellow-50 px-3 py-1 text-xs text-yellow-700">
-                  {selectedOrder.payment_status || '—'}
-                </span>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className={`inline-flex rounded-full px-3 py-1 text-xs ${paymentStatusColor(selectedOrder.payment_status)}`}>
+                    {selectedOrder.payment_status || '—'}
+                  </span>
+                  <select
+                    aria-label="Change payment status"
+                    value={selectedOrder.payment_status || 'Pending'}
+                    disabled={orderStatusSavingId === selectedOrder.id}
+                    onChange={event => { void updateOrderPayment(selectedOrder, event.target.value) }}
+                    className="rounded-full border border-border bg-white px-3 py-1 text-xs text-charcoal outline-none focus:border-champagne disabled:opacity-60"
+                  >
+                    {['Pending', 'Paid', 'Failed', 'Refunded'].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                {orderStatusErrors[selectedOrder.id] && (
+                  <p role="alert" className="mt-1 text-xs text-wine">{orderStatusErrors[selectedOrder.id]}</p>
+                )}
               </div>
               <div className="sm:col-span-2">
                 <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Order status</p>
@@ -6084,7 +6277,12 @@ export default function App() {
       const parsedCart: unknown = JSON.parse(storedCart)
       if (!Array.isArray(parsedCart)) return []
 
-      return parsedCart.filter((item): item is CartItem => {
+      return parsedCart
+        // Older saved carts may hold string ids ("9") from before ids were normalised.
+        .map(item => (item && typeof item === 'object' && typeof (item as any).id === 'string' && /^\d+$/.test((item as any).id))
+          ? { ...item, id: Number((item as any).id) }
+          : item)
+        .filter((item): item is CartItem => {
         if (typeof item !== 'object' || item === null) return false
 
         const cartItem = item as Partial<CartItem>
@@ -6132,8 +6330,23 @@ export default function App() {
     }
   }, [cart])
 
+  // Pages that need a signed-in customer. Visiting one while signed out goes to
+  // sign-in first, then returns to that page after a successful sign-in.
+  const pageAfterSignInRef = useRef<Page | null>(null)
+  const guardPage = (requested: Page, signedIn: boolean): Page => {
+    if (!signedIn && (requested === 'wishlist' || requested === 'checkout')) {
+      pageAfterSignInRef.current = requested
+      return 'account-sign-in'
+    }
+    return requested
+  }
+
+  // A product id from the URL waits here until the product list has loaded.
+  const pendingProductIdRef = useRef<number | null>(null)
+  const [pendingProductTick, setPendingProductTick] = useState(0)
+
   const setPage = (nextPage: Page) => {
-    const destination = nextPage === 'wishlist' && !customerSession ? 'account-sign-in' : nextPage
+    const destination = guardPage(nextPage, !!customerSession)
     if (destination === page) return
     window.history.pushState({ page: destination }, '', `#${destination}`)
     setPageState(destination)
@@ -6174,6 +6387,37 @@ export default function App() {
     return () => { active = false }
   }, [customerSession?.token])
 
+  // Sign out when a login token expires (12 hours), instead of letting every
+  // request fail silently. Also runs on page load for a token saved earlier.
+  useEffect(() => {
+    const expiresAt = tokenExpiryMs(adminSession?.token)
+    if (!adminSession || expiresAt === null) return
+
+    const remaining = expiresAt - Date.now()
+    if (remaining <= 0) {
+      expireAdminSession()
+      return
+    }
+
+    // setTimeout cannot wait longer than ~24.8 days; tokens last 12 hours.
+    const timer = window.setTimeout(() => { expireAdminSession() }, Math.min(remaining, 2 ** 31 - 1))
+    return () => window.clearTimeout(timer)
+  }, [adminSession?.token])
+
+  useEffect(() => {
+    const expiresAt = tokenExpiryMs(customerSession?.token)
+    if (!customerSession || expiresAt === null) return
+
+    const remaining = expiresAt - Date.now()
+    if (remaining <= 0) {
+      expireCustomerSession()
+      return
+    }
+
+    const timer = window.setTimeout(() => { expireCustomerSession() }, Math.min(remaining, 2 ** 31 - 1))
+    return () => window.clearTimeout(timer)
+  }, [customerSession?.token])
+
   const handleAdminLoginSuccess = (session: AdminAuthSession, rememberMe: boolean) => {
     if (rememberMe) {
       localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session))
@@ -6186,12 +6430,34 @@ export default function App() {
     setPage('admin-dashboard')
   }
 
-  const handleCustomerLoginSuccess = (session: CustomerAuthSession) => {
+  // Save hearts tapped while signed out to the account, then forget the local copy.
+  const mergeGuestWishlist = async (token: string) => {
+    const guestIds = getGuestWishlist()
+    if (guestIds.length === 0) return
+
+    await Promise.all(guestIds.map(productId =>
+      fetch(`${API_BASE_URL}/api/wishlist`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: productId }),
+      }).catch(() => undefined) // 409 "already in wishlist" and removed products are fine to skip
+    ))
+    setGuestWishlist([])
+  }
+
+  const handleCustomerLoginSuccess = async (session: CustomerAuthSession) => {
     setWishlist([])
     setWishlistLoading(true)
+    await mergeGuestWishlist(session.token)
     sessionStorage.setItem(CUSTOMER_SESSION_KEY, JSON.stringify(session))
+    // Setting the session reloads the wishlist from the server, now including the merged items.
     setCustomerSession(session)
-    setPage('account')
+
+    const returnTo = pageAfterSignInRef.current
+    pageAfterSignInRef.current = null
+    const destination = returnTo ?? 'account'
+    window.history.pushState({ page: destination }, '', `#${destination}`)
+    setPageState(destination)
   }
 
   const openCustomerOrder = (orderNumber: string) => {
@@ -6218,6 +6484,30 @@ export default function App() {
     // Node JWT authentication is stateless; session cleared above
   }
 
+  // Expired logins are cleared quietly; the visitor is only moved to a sign-in page
+  // when they are on a page that needs the login.
+  // These run from timers set hours earlier, so they read the current page from a
+  // ref; the `page` variable captured at that time would be out of date.
+  const expireAdminSession = () => {
+    localStorage.removeItem(ADMIN_SESSION_KEY)
+    sessionStorage.removeItem(ADMIN_SESSION_KEY)
+    setAdminSession(null)
+    if (pageRef.current === 'admin-dashboard') {
+      window.history.pushState({ page: 'admin-login' }, '', '#admin-login')
+      setPageState('admin-login')
+    }
+  }
+
+  const expireCustomerSession = () => {
+    sessionStorage.removeItem(CUSTOMER_SESSION_KEY)
+    setCustomerSession(null)
+    if (pageRef.current === 'account') {
+      window.history.pushState({ page: 'account-sign-in' }, '', '#account-sign-in')
+      setPageState('account-sign-in')
+    }
+    // wishlist and checkout redirect to sign-in through guardPage.
+  }
+
   const logoutAdmin = async () => {
     // Node JWT authentication is stateless; session cleared below
 
@@ -6227,10 +6517,15 @@ export default function App() {
     setPage('admin-login')
   }
 
-  const addToCart = (p: Product) => {
+  const addToCart = (p: Product, qty = 1) => {
+    if (!isPurchasable(p)) return
+    // Never put more in the bag than is in stock; the order would be rejected anyway.
+    const limit = p.stock ?? Infinity
     setCart(c => {
       const ex = c.find(i => i.id === p.id)
-      return ex ? c.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i) : [...c, { ...p, qty: 1 }]
+      return ex
+        ? c.map(i => i.id === p.id ? { ...i, ...p, qty: Math.min(limit, i.qty + qty) } : i)
+        : [...c, { ...p, qty: Math.min(limit, qty) }]
     })
   }
 
@@ -6345,23 +6640,49 @@ export default function App() {
     return () => document.removeEventListener('click', handleWishlistDelegation, true)
   }, [toggleWishlist])
 
-  useEffect(() => {
-    const initialPage = window.location.hash.slice(1) as Page
+  // Read "#page" or "#product/<id>" from the URL. The product id lets a refreshed
+  // or shared product link open the right saree.
+  const parseHash = (): { page: Page, productId: number | null } => {
     const validPages: Page[] = ['home', 'shop', 'product', 'cart', 'wishlist', 'account', 'account-sign-in', 'checkout', 'order-success', 'order-tracking', 'about', 'contact', 'admin-login', 'admin-dashboard']
-    const requestedPage = validPages.includes(initialPage) ? initialPage : 'home'
-    const startingPage = requestedPage === 'wishlist' && !customerSession ? 'account-sign-in' : requestedPage
+    const [rawPage, rawId] = window.location.hash.slice(1).split('/')
+    const requested = validPages.includes(rawPage as Page) ? rawPage as Page : 'home'
+    const productId = requested === 'product' && /^\d+$/.test(rawId ?? '') ? Number(rawId) : null
+    return { page: requested, productId }
+  }
+
+  const customerSessionRef = useRef(customerSession)
+  customerSessionRef.current = customerSession
+  const pageRef = useRef(page)
+  pageRef.current = page
+
+  useEffect(() => {
+    const { page: requestedPage, productId } = parseHash()
+    const startingPage = guardPage(requestedPage, !!customerSession)
+    if (productId !== null) pendingProductIdRef.current = productId
     setPageState(startingPage)
-    window.history.replaceState({ page: startingPage }, '', `#${startingPage}`)
+    window.history.replaceState({ page: startingPage }, '', productId !== null && startingPage === 'product' ? `#product/${productId}` : `#${startingPage}`)
 
     const handlePopState = () => {
-      const previousPage = window.location.hash.slice(1) as Page
-      const requestedPage = validPages.includes(previousPage) ? previousPage : 'home'
-      setPageState(requestedPage === 'wishlist' && !customerSession ? 'account-sign-in' : requestedPage)
+      const { page: previousPage, productId: previousProductId } = parseHash()
+      if (previousProductId !== null) {
+        pendingProductIdRef.current = previousProductId
+        setPendingProductTick(t => t + 1)
+      }
+      // Read the session through a ref: this listener is registered once and would
+      // otherwise keep the session from the first render.
+      setPageState(guardPage(previousPage, !!customerSessionRef.current))
     }
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  // Keep the open saree's id in the URL.
+  useEffect(() => {
+    if (page === 'product' && selectedProduct && window.location.hash !== `#product/${selectedProduct.id}`) {
+      window.history.replaceState({ page }, '', `#product/${selectedProduct.id}`)
+    }
+  }, [page, selectedProduct?.id])
 
 const refreshProducts = async () => {
   setProductsLoading(true)
@@ -6378,35 +6699,7 @@ const refreshProducts = async () => {
       throw new Error('The products response was invalid')
     }
 
-    const mappedProducts: Product[] = data.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        price: Number(p.price),
-        originalPrice: p.original_price !== null
-          ? Number(p.original_price)
-          : undefined,
-          discount: p.discount !== null
-  ? Number(p.discount)
-  : 0,
-
-stock: Number(p.stock) || 0,
-        image: productImageUrl(p.image),
-    images: Array.isArray(p.images)
-  ? p.images
-      .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
-      .filter(Boolean)
-  : [],
-        badge: p.badge ?? undefined,
-        fabric: p.fabric ?? '',
-        color: p.color ?? '',
-        sku: p.sku ?? '',
-        inStock: Boolean(p.in_stock),
-        description: p.description ?? undefined,
-        returnExchange: p.return_exchange ?? undefined,
-        manufacturedBy: p.manufactured_by ?? undefined,
-        marketedBy: p.marketed_by ?? undefined,
-      }))
+    const mappedProducts: Product[] = data.map(mapApiProduct)
 
     setProducts(mappedProducts)
   } catch (error) {
@@ -6473,7 +6766,8 @@ useEffect(() => {
 
   const loadWishlist = async () => {
     if (!customerSession) {
-      setWishlist([])
+      // Signed out: show the hearts saved in this browser (merged on sign-in).
+      setWishlist(getGuestWishlist())
       setWishlistLoading(false)
       return
     }
@@ -6506,8 +6800,16 @@ useEffect(() => {
 }, [sessionId, customerSession?.token])
 
 useEffect(() => {
-  if (!customerSession && page === 'wishlist') setPage('account-sign-in')
+  if (!customerSession && (page === 'wishlist' || page === 'checkout')) setPage(page)
 }, [customerSession, page])
+
+// Open the saree named in the URL once products have loaded.
+useEffect(() => {
+  const id = pendingProductIdRef.current
+  if (id === null || productsLoading) return
+  pendingProductIdRef.current = null
+  setSelectedProduct(products.find(p => p.id === id) ?? null)
+}, [products, productsLoading, pendingProductTick])
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }) }, [page])
 

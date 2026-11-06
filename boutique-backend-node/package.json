@@ -1,11 +1,17 @@
 {
   "name": "boutique-backend-node",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "prisma:generate": "prisma generate --config prisma7.config.ts",
+    "migrate:deploy": "prisma migrate deploy --config prisma7.config.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run prisma:generate && tsc",
     "start": "node dist/server.js"
   },
   "keywords": [],
@@ -22,18 +28,17 @@
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.5.0",
-    "mysql2": "^3.24.6",
     "pg": "^8.23.1",
     "prisma": "^7.10.1"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.3.0",
-    "@types/node": "^26.6.6",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
+    "mysql2": "^3.24.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

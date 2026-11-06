@@ -1,3 +1,5 @@
 [tools]
-node = "22"
+# Node.js 24 "Krypton" LTS (supported until April 2028). Every dependency here
+# supports it, and it is the version this project is developed and tested on.
+node = "24"
 "npm:pnpm" = "10.34.3"

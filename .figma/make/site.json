@@ -1,5 +1,10 @@
 {
-  "description": "Create stunning responsive websites with creative round shape cards, smooth navigation, and elegant colors, perfect for enhancing user engagement.",
+  "title": "Yaale – Handcrafted Sarees",
+  "description": "Yaale sarees: handpicked soft silk, semi silk and cotton sarees from India's finest weavers, delivered across India.",
+  "language": "en",
+  "icons": {
+    "icon": "/yaale-logo.png"
+  },
   "robots": {
     "index": false
   },
