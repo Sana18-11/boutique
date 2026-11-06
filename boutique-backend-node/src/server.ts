@@ -427,6 +427,8 @@ app.get("/api/health", async (req, res) => {
       message: "Yaale backend and database are working!",
     });
   } catch (error) {
+    console.error("Health check database error:", error);
+
     res.status(500).json({
       success: false,
       message: "Database connection failed",
