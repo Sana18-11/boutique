@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                BigInt    @id @default(autoincrement())
+  name              String    @db.VarChar(255)
+  email             String    @unique @db.VarChar(255)
+  emailVerifiedAt   DateTime? @map("email_verified_at")
+  password          String    @db.VarChar(255)
+  rememberToken     String?   @map("remember_token") @db.VarChar(100)
+  isAdmin           Boolean   @default(false) @map("is_admin")
+  createdAt         DateTime? @map("created_at")
+  updatedAt         DateTime? @map("updated_at")
+
+  addresses         Address[]
+  orders            Order[]  @relation("CustomerOrders")
+  orderStatusChanges OrderStatusHistory[] @relation("ChangedByUser")
+  wishlists         Wishlist[] @relation("UserWishlists")
+
+  @@map("users")
+}
+
+model PasswordResetToken {
+  email     String   @id @db.VarChar(255)
+  token     String   @db.VarChar(255)
+  createdAt DateTime? @map("created_at")
+
+  @@map("password_reset_tokens")
+}
+
+model Product {
+  id               BigInt      @id @default(autoincrement())
+  name             String      @db.VarChar(255)
+  description      String?
+  price            Decimal     @db.Decimal(10, 2)
+  originalPrice    Decimal?    @map("original_price") @db.Decimal(10, 2)
+  discount         Decimal?    @db.Decimal(5, 2)
+  category         String      @db.VarChar(255)
+  image            String?     @db.VarChar(255)
+  badge            String?     @db.VarChar(255)
+  fabric           String?     @db.VarChar(255)
+  color            String?     @db.VarChar(255)
+  length           String?     @db.VarChar(255)
+  blouse           String?     @db.VarChar(255)
+  occasion         String?     @db.VarChar(255)
+  sku              String?     @unique @db.VarChar(255)
+  stock            Int         @default(0)
+  inStock          Boolean     @default(true) @map("in_stock")
+  isActive         Boolean     @default(true) @map("is_active")
+  returnExchange   String?     @map("return_exchange")
+  manufacturedBy   String?     @map("manufactured_by") @db.VarChar(255)
+  marketedBy       String?     @map("marketed_by") @db.VarChar(255)
+  createdAt        DateTime?   @map("created_at")
+  updatedAt        DateTime?   @map("updated_at")
+
+  images           ProductImage[]
+  orderItems       OrderItem[]
+  wishlists        Wishlist[]
+
+  @@map("products")
+}
+
+model ProductImage {
+  id        BigInt   @id @default(autoincrement())
+  productId BigInt   @map("product_id")
+  image     String   @db.VarChar(255)
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+model Category {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique @db.VarChar(255)
+  description String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  @@map("categories")
+}
+
+model Wishlist {
+  id        BigInt    @id @default(autoincrement())
+  productId BigInt    @map("product_id")
+  sessionId String?   @map("session_id") @db.VarChar(255)
+  userId    BigInt?   @map("user_id")
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User?     @relation("UserWishlists", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sessionId])
+  @@unique([userId, productId])
+  @@map("wishlists")
+}
+
+model Video {
+  id        BigInt   @id @default(autoincrement())
+  title     String   @db.VarChar(255)
+  video     String   @db.VarChar(255)
+  poster    String?  @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  @@map("videos")
+}
+
+model Offer {
+  id          BigInt   @id @default(autoincrement())
+  title       String   @db.VarChar(255)
+  type        String   @db.VarChar(255)
+  value       String   @db.VarChar(255)
+  description String
+  status      String   @db.VarChar(255)
+  createdAt   DateTime? @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  @@map("offers")
+}
+
+model StoreSetting {
+  id                     BigInt   @id @default(autoincrement())
+  storeName             String?  @map("store_name") @db.VarChar(255)
+  storeEmail            String?  @map("store_email") @db.VarChar(255)
+  storePhone            String?  @map("store_phone") @db.VarChar(50)
+  storeAddress          String?  @map("store_address")
+  shippingFee           Decimal? @map("shipping_fee") @db.Decimal(10, 2)
+  freeShippingThreshold Decimal? @map("free_shipping_threshold") @db.Decimal(10, 2)
+  returnPolicy          String?  @map("return_policy")
+  shippingPolicy        String?  @map("shipping_policy")
+  privacyPolicy         String?  @map("privacy_policy")
+  termsPolicy           String?  @map("terms_policy")
+  createdAt             DateTime? @map("created_at")
+  updatedAt             DateTime? @map("updated_at")
+
+  @@map("store_settings")
+}
+
+model ContactMessage {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar(255)
+  email     String   @db.VarChar(255)
+  mobile    String   @db.VarChar(16)
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  @@map("contact_messages")
+}
+
+model Address {
+  id          BigInt   @id @default(autoincrement())
+  userId      BigInt   @map("user_id")
+  name        String   @db.VarChar(255)
+  phone       String   @db.VarChar(20)
+  addressLine String   @map("address_line") @db.VarChar(500)
+  city        String   @db.VarChar(100)
+  state       String   @db.VarChar(100)
+  pinCode     String   @map("pin_code") @db.VarChar(20)
+  landmark    String?  @db.VarChar(255)
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime? @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isDefault])
+  @@map("addresses")
+}
+
+model Order {
+  id                   BigInt    @id @default(autoincrement())
+  userId               BigInt?   @map("user_id")
+  orderNumber          String    @unique @map("order_number") @db.VarChar(255)
+  customerName         String    @map("customer_name") @db.VarChar(255)
+  customerPhone        String    @map("customer_phone") @db.VarChar(255)
+  customerAddress      String    @map("customer_address")
+  totalAmount          Decimal   @map("total_amount") @db.Decimal(10, 2)
+  status               String    @default("Pending") @db.VarChar(255)
+  paymentStatus        String    @default("Pending") @map("payment_status") @db.VarChar(255)
+  expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
+  createdAt            DateTime? @map("created_at")
+  updatedAt            DateTime? @map("updated_at")
+
+  user                 User?     @relation("CustomerOrders", fields: [userId], references: [id], onDelete: SetNull)
+  items                OrderItem[]
+  statusHistory        OrderStatusHistory[]
+
+  @@index([userId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          BigInt   @id @default(autoincrement())
+  orderId     BigInt   @map("order_id")
+  productId   BigInt   @map("product_id")
+  productName String   @map("product_name") @db.VarChar(255)
+  quantity    Int      @default(1)
+  price       Decimal  @db.Decimal(10, 2)
+  createdAt   DateTime? @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id         BigInt    @id @default(autoincrement())
+  orderId    BigInt    @map("order_id")
+  changedBy  BigInt?   @map("changed_by")
+  status     String    @db.VarChar(255)
+  note       String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedByUser User?  @relation("ChangedByUser", fields: [changedBy], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([changedBy])
+  @@map("order_status_histories")
+}
+

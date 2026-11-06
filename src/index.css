@@ -2,49 +2,50 @@
 @import 'tailwindcss';
 
 :root {
-  --bg-main: #FBFAF7;
-  --bg-soft: #F3EEE8;
-  --bg-dark: #2B1C1A;
-  --maroon: #7A0C32;
-  --maroon-deep: #4E1D16;
-  --red: #880001;
-  --terracotta: #A33B1B;
-  --copper: #BC7442;
-  --gold: #C9A227;
-  --text-main: #2B1C1A;
-  --text-muted: #8A7F7C;
-  --line: #E3DCD6;
-  --text-on-dark: #FBFAF7;
+  --bg-main: #F4EAE2;
+  --bg-soft: #E8C9CF;
+  --bg-rose: #E8C9CF;
+  --bg-cream: #F4EAE2;
+  --bg-dark: #063737;
+  --bg-teal: #063737;
+  --maroon: #A25524;
+  --maroon-deep: #7E431B;
+  --red: #A25524;
+  --terracotta: #A25524;
+  --copper: #C98F67;
+  --gold: #808000;
+  --text-main: #302521;
+  --text-muted: #75645D;
+  --line: #EAD6D5;
+  --text-on-dark: #F4EAE2;
 }
-
 @theme {
   --font-serif: 'Cormorant Infant', Georgia, serif;
   --font-sans: 'Jost', system-ui, sans-serif;
 
   --color-bg-main: var(--bg-main);
   --color-bg-soft: var(--bg-soft);
+  --color-bg-cream: var(--bg-cream);
   --color-bg-dark: var(--bg-dark);
   --color-maroon: var(--maroon);
   --color-maroon-deep: var(--maroon-deep);
   --color-red: var(--red);
   --color-terracotta: var(--terracotta);
   --color-copper: var(--copper);
-  --color-gold: var(--gold);
+  --color-gold: var(--maroon);
   --color-text-main: var(--text-main);
   --color-text-muted: var(--text-muted);
   --color-line: var(--line);
   --color-text-on-dark: var(--text-on-dark);
 
-  /* Map existing classes across all components to the new variable palette */
   --color-ivory: var(--bg-main);
-  --color-cream: var(--bg-soft);
+  --color-cream: var(--bg-cream);
   --color-charcoal: var(--bg-dark);
-  --color-champagne: var(--gold);
+  --color-champagne: var(--bg-cream);
   --color-wine: var(--maroon);
   --color-warm-gray: var(--text-muted);
   --color-border: var(--line);
 }
-
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -68,7 +69,7 @@ section.bg-ivory, .bg-ivory {
 }
 
 section.bg-cream, .bg-cream {
-  background-color: var(--bg-soft) !important;
+  background-color: var(--bg-cream) !important;
 }
 
 section.bg-charcoal, .bg-charcoal, footer {
@@ -76,13 +77,89 @@ section.bg-charcoal, .bg-charcoal, footer {
   color: var(--text-on-dark) !important;
 }
 
-/* Primary buttons: --maroon background, --text-on-dark text; hover to --maroon-deep */
+header {
+  background-color: var(--bg-soft) !important;
+  border-color: rgba(6, 55, 55, 0.08) !important;
+}
+
+header nav button,
+header button[aria-label="Wishlist"],
+header button[aria-label="Cart"],
+header button[aria-label="Account"],
+header button[aria-label="Menu"],
+header button[aria-label="Close menu"],
+header button[aria-label="Yaale home"],
+header .text-charcoal,
+header .text-gold,
+header .text-warm-gray {
+  color: var(--bg-dark) !important;
+}
+
+header nav button:hover,
+header button[aria-label="Wishlist"]:hover,
+header button[aria-label="Cart"]:hover,
+header button[aria-label="Account"]:hover,
+header button[aria-label="Menu"]:hover {
+  color: var(--maroon) !important;
+}
+
+header .bg-wine,
+header .bg-[#25d366],
+header [class*="bg-wine"],
+header span.absolute {
+  background-color: var(--maroon) !important;
+  color: var(--text-on-dark) !important;
+}
+
+/* Hero should keep photograph natural; no heavy overlay or opacity layer */
+section.relative.bg-charcoal,
+section.relative {
+  background-color: var(--bg-main) !important;
+}
+
+section.relative.bg-charcoal img,
+section.relative img {
+  filter: none !important;
+}
+
+section.relative.bg-charcoal > div.absolute.inset-0,
+section.relative > div.absolute.inset-0 {
+  background: none !important;
+}
+
+section.relative.bg-charcoal h1,
+section.relative.bg-charcoal h1 em,
+section.relative.bg-charcoal p,
+section.relative.bg-charcoal button,
+section.relative.bg-charcoal .text-white,
+section.relative.bg-charcoal .text-white\/70,
+section.relative.bg-charcoal .text-white\/40,
+section.relative.bg-charcoal .text-champagne,
+section.relative.bg-charcoal .text-gold,
+section.relative h1,
+section.relative h1 em,
+section.relative p,
+section.relative button {
+  color: var(--text-main) !important;
+}
+
+section.relative.bg-charcoal h1 em,
+section.relative h1 em {
+  color: var(--maroon) !important;
+}
+
+section.relative.bg-charcoal button,
+section.relative button {
+  border-color: rgba(6, 55, 55, 0.65) !important;
+}
+
+/* Primary buttons: deep teal background with cream text; hover in terracotta */
 button.bg-champagne,
 button.bg-wine,
 a.bg-champagne,
 a.bg-wine,
 .btn-primary {
-  background-color: var(--maroon) !important;
+  background-color: var(--bg-dark) !important;
   color: var(--text-on-dark) !important;
   border-color: transparent !important;
   transition: background-color 0.25s ease, transform 0.2s ease;
@@ -93,18 +170,18 @@ button.bg-wine:hover,
 a.bg-champagne:hover,
 a.bg-wine:hover,
 .btn-primary:hover {
-  background-color: var(--maroon-deep) !important;
+  background-color: var(--maroon) !important;
   color: var(--text-on-dark) !important;
 }
 
-/* Secondary buttons: transparent with a --maroon border, hover to --terracotta / --maroon */
+/* Secondary buttons: warm ivory/transparent with deep teal border and text */
 button.border-champagne,
 button.border-gold,
 button.border-white\/50,
 .btn-secondary {
-  background-color: transparent !important;
-  border-color: var(--maroon) !important;
-  color: var(--maroon) !important;
+  background-color: rgba(244, 229, 217, 0.72) !important;
+  border-color: var(--bg-dark) !important;
+  color: var(--bg-dark) !important;
   transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
 }
 
@@ -112,26 +189,27 @@ button.border-champagne:hover,
 button.border-gold:hover,
 button.border-white\/50:hover,
 .btn-secondary:hover {
-  background-color: var(--maroon) !important;
+  background-color: var(--bg-soft) !important;
   border-color: var(--maroon) !important;
-  color: var(--text-on-dark) !important;
+  color: var(--bg-dark) !important;
 }
 
 /* Secondary buttons on dark hero / dark banners */
 section.bg-charcoal button.border-white\/50,
 section.bg-charcoal button.border-champagne {
+  background-color: rgba(244, 229, 217, 0.12) !important;
   color: var(--text-on-dark) !important;
-  border-color: var(--copper) !important;
+  border-color: rgba(244, 229, 217, 0.75) !important;
 }
 
 section.bg-charcoal button.border-white\/50:hover,
 section.bg-charcoal button.border-champagne:hover {
-  background-color: var(--maroon) !important;
-  border-color: var(--maroon) !important;
+  background-color: rgba(162, 85, 36, 0.16) !important;
+  border-color: rgba(244, 229, 217, 0.9) !important;
   color: var(--text-on-dark) !important;
 }
 
-/* Product cards: --bg-soft or white background, thin --line border, price in --maroon, hover border in --copper */
+/* Product cards: soft blush backgrounds with deep teal accent */
 .product-card-motion > div:first-child,
 div.aspect-\[3\/4\] {
   background-color: var(--bg-soft) !important;
@@ -141,13 +219,13 @@ div.aspect-\[3\/4\] {
 
 .product-card-motion:hover > div:first-child,
 .group:hover div.aspect-\[3\/4\] {
-  border-color: var(--copper) !important;
+  border-color: var(--maroon) !important;
 }
 
-/* Price styling in --maroon */
+/* Price styling in terracotta/deep teal */
 .product-card-motion .text-sm.font-medium,
 div.aspect-\[3\/4\] + div .text-sm.font-medium {
-  color: var(--maroon) !important;
+  color: var(--bg-dark) !important;
 }
 
 .product-card-motion .text-xs.line-through,
@@ -157,38 +235,39 @@ div.aspect-\[3\/4\] + div .text-xs.line-through {
 
 /* Add to bag / quick button on cards */
 div.aspect-\[3\/4\] button {
-  background-color: var(--maroon) !important;
-  color: var(--gold) !important;
-  border: 1px solid var(--copper) !important;
+  background-color: var(--bg-dark) !important;
+  color: var(--text-on-dark) !important;
+  border: 1px solid var(--bg-dark) !important;
 }
 
 div.aspect-\[3\/4\] button:hover {
-  background-color: var(--maroon-deep) !important;
+  background-color: var(--maroon) !important;
   color: var(--text-on-dark) !important;
 }
 
-/* Sale tags, badges, important accents use --red */
+/* Sale tags, badges, important accents use terracotta */
 span.bg-wine,
 .badge-sale {
-  background-color: var(--red) !important;
+  background-color: var(--maroon) !important;
   color: var(--text-on-dark) !important;
 }
 
-/* Highlight words and italic accent text in headings use --gold */
+/* Highlight words and italic accent text in headings use terracotta */
 h1 em, h2 em, h3 em, em.text-champagne, em.text-gold, .text-gold, .text-champagne {
-  color: var(--gold) !important;
-}
-
-/* Navbar active link and underline use --maroon */
-header nav button.text-gold,
-header nav button[class*="text-gold"],
-header nav button.active {
   color: var(--maroon) !important;
 }
 
-/* Footer & dark sections: --text-on-dark, --gold links on hover */
+/* Navbar active link and underline use deep teal */
+header nav button.text-gold,
+header nav button[class*="text-gold"],
+header nav button.active {
+  color: var(--bg-dark) !important;
+}
+
+/* Footer & dark sections: deep teal background with ivory text */
 footer,
 section.bg-charcoal {
+  background-color: var(--bg-dark) !important;
   color: var(--text-on-dark) !important;
 }
 
@@ -203,7 +282,7 @@ footer a:hover,
 footer button:hover,
 section.bg-charcoal a:hover,
 section.bg-charcoal button:hover {
-  color: var(--gold) !important;
+  color: var(--bg-soft) !important;
 }
 
 /* Elimination of all green tones */
@@ -234,6 +313,45 @@ section.bg-charcoal button:hover {
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 button, a { touch-action: manipulation; }
 img, video { max-width: 100%; }
+
+.announcement-bar {
+  position: relative;
+  overflow: hidden;
+  background: #063737;
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.announcement-bar-track {
+  display: flex;
+  align-items: center;
+  gap: 2.5rem;
+  white-space: nowrap;
+  width: max-content;
+  min-width: 100%;
+  padding: 0.65rem 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.28em;
+  font-weight: 300;
+  text-transform: uppercase;
+  animation: announcement-marquee 18s linear infinite;
+  will-change: transform;
+}
+
+.announcement-bar-track span {
+  display: inline-block;
+  white-space: nowrap;
+  color: #fff;
+}
+
+@keyframes announcement-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
 
 .home-best-sellers-row {
   display: flex;
@@ -391,8 +509,30 @@ img, video { max-width: 100%; }
     transition-duration: 0.01ms !important;
   }
 
-  .home-products-marquee-track {
+  .home-products-marquee-track,
+  .announcement-bar-track {
     animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .announcement-decor {
+    width: 110px;
+    height: 58px;
+  }
+
+  .announcement-bar-track {
+    font-size: 0.58rem;
+    letter-spacing: 0.18em;
+    gap: 1.5rem;
+  }
+
+  .new-arrivals-header {
+    align-items: flex-start;
+  }
+
+  .new-arrivals-title {
+    font-size: clamp(2.7rem, 12vw, 4.1rem);
   }
 }
 

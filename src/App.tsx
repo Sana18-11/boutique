@@ -1,5 +1,29 @@
 import { createContext, useContext, useState, useEffect, useRef, type FormEvent } from 'react'
 
+interface GsapMatchMedia {
+  add: (query: string, callback: () => void) => void
+  revert: () => void
+}
+
+interface GsapInstance {
+  matchMedia: () => GsapMatchMedia
+  fromTo: (
+    targets: Element | Element[] | NodeListOf<Element>,
+    fromVars: Record<string, string | number | boolean>,
+    toVars: Record<string, string | number | boolean>
+  ) => void
+  set: (
+    targets: Element | Element[] | NodeListOf<Element>,
+    vars: Record<string, string | number | boolean>
+  ) => void
+}
+
+declare global {
+  interface Window {
+    gsap: GsapInstance
+  }
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard'
 type ShopCategoryFilter = 'ALL' | 'Soft Silk' | 'Cotton' | 'Semi Silk'
@@ -30,7 +54,7 @@ const productImageUrl = (image: unknown) => {
   if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:)/i.test(path)) return path
 
   const storagePath = path.replace(/^\/+/, '').replace(/^storage\//i, '')
-  return storagePath ? `http://127.0.0.1:8000/storage/${storagePath}` : ''
+  return storagePath ? `http://localhost:5000/storage/${storagePath}` : ''
 }
 
 const getProductMainImage = (p: Partial<Product> | null | undefined): string => {
@@ -246,9 +270,14 @@ function useProductsStore() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 function AnnouncementBar() {
+  const message = 'PAN INDIA DELIVERY • SECURE ONLINE PAYMENT • EXCLUSIVELY HANDCRAFTED'
+
   return (
-    <div className="bg-charcoal text-champagne text-center py-2 text-xs tracking-[0.2em] font-light">
-      PAN INDIA DELIVERY &nbsp;•&nbsp; SECURE ONLINE PAYMENT &nbsp;•&nbsp; EXCLUSIVELY HANDCRAFTED
+    <div className="announcement-bar" aria-label="Store announcement">
+      <div className="announcement-bar-track">
+        <span>{message}</span>
+        <span aria-hidden="true">{message}</span>
+      </div>
     </div>
   )
 }
@@ -278,7 +307,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
   ]
 
   return (
-    <header className={`sticky top-0 z-50 transition-all duration-300 ${scrolled ? 'bg-ivory/95 backdrop-blur-md shadow-sm' : 'bg-ivory'} border-b border-border`}>
+    <header className={`sticky top-0 z-50 transition-all duration-300 ${scrolled ? 'bg-[#E8C9CF]/95 backdrop-blur-md shadow-sm' : 'bg-[#E8C9CF]'} border-b border-border`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
         {/* Logo */}
         <button onClick={() => setPage('home')} className="flex items-center leading-none cursor-pointer" aria-label="Yaale home">
@@ -289,7 +318,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
         <nav className="hidden md:flex items-center gap-8">
           {navLinks.map(l => (
             <button key={l.label} onClick={() => setPage(l.href)}
-              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 ${page === l.href ? 'text-gold' : 'text-charcoal hover:text-gold'}`}>
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 ${page === l.href ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}>
               {l.label}
             </button>
           ))}
@@ -297,18 +326,18 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
 
         {/* Icons */}
         <div className="flex items-center gap-3">
-          <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative p-1 text-charcoal hover:text-gold transition-colors" aria-label="Wishlist">
+          <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative p-1 text-[#063737] hover:text-[#A25524] transition-colors" aria-label="Wishlist">
             <HeartIcon />
-            {wishlistCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-wine text-white text-[9px] rounded-full flex items-center justify-center">{wishlistCount}</span>}
+            {wishlistCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center">{wishlistCount}</span>}
           </button>
-          <button onClick={() => setPage('cart')} className="relative p-1 text-charcoal hover:text-gold transition-colors" aria-label="Cart">
+          <button onClick={() => setPage('cart')} className="relative p-1 text-[#063737] hover:text-[#A25524] transition-colors" aria-label="Cart">
             <BagIcon />
-            {cartCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-wine text-white text-[9px] rounded-full flex items-center justify-center">{cartCount}</span>}
+            {cartCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center">{cartCount}</span>}
           </button>
-          <button onClick={() => setPage(customerSession ? 'account' : 'account-sign-in')} className="p-1 text-charcoal hover:text-gold transition-colors hidden md:block" aria-label="Account">
+          <button onClick={() => setPage(customerSession ? 'account' : 'account-sign-in')} className="p-1 text-[#063737] hover:text-[#A25524] transition-colors hidden md:block" aria-label="Account">
             <UserIcon />
           </button>
-          <button className="md:hidden flex h-9 w-9 items-center justify-center rounded-full bg-[#f0e9dd] text-charcoal transition-colors hover:bg-cream" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
+          <button className="md:hidden flex h-9 w-9 items-center justify-center rounded-full bg-[#f0e9dd] text-[#063737] transition-colors hover:bg-[#F4EAE2]" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
             <span className="flex flex-col items-center gap-1.5">
               <span className="block h-0.5 w-4 rounded-full bg-current" />
               <span className="block h-0.5 w-4 rounded-full bg-current" />
@@ -621,36 +650,35 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
    return (
     <div>
       {/* Hero */}
-      <section className="relative h-[90vh] min-h-[600px] overflow-hidden bg-charcoal">
+      <section className="relative h-[90vh] min-h-[600px] overflow-hidden bg-[#F4EAE2]">
         {HERO_IMAGES.map((image, index) => (
-          <img key={image} src={image} alt="Elegant saree editorial" className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroImage ? 'opacity-70' : 'opacity-0'}`} />
+           <img key={image} src={image} alt="Elegant saree editorial" className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroImage ? 'opacity-100' : 'opacity-0'}`} />
         ))}
-        <div className="absolute inset-0 bg-gradient-to-r from-charcoal/80 via-charcoal/30 to-transparent" />
-        <div className="relative h-full flex flex-col justify-center max-w-7xl mx-auto px-6 sm:px-10">
-          <div className="max-w-2xl">
-            <h1 className="font-serif text-5xl sm:text-6xl lg:text-7xl text-white leading-[1.1] mb-6">
-              Timeless Drapes.<br /><em className="text-champagne not-italic">Effortless Elegance.</em>
-            </h1>
-            <p className="text-white/70 text-base sm:text-lg font-light leading-relaxed mb-10 max-w-lg">
-              Discover our curated collection of sarees, woven for moments that matter.
-            </p>
-            <div className="flex flex-wrap gap-4">
-              <button onClick={() => setPage('shop')}
-                className="bg-champagne text-charcoal px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-medium hover:bg-charcoal hover:text-champagne transition-colors duration-300">
-                Shop Collection
-              </button>
-              <button onClick={() => setPage('shop')}
-                className="border border-white/50 text-white px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-light hover:border-champagne hover:text-champagne transition-colors duration-300">
-                Explore Sarees
-              </button>
-            </div>
-          </div>
-        </div>
-        {/* Scroll hint */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-white/40">
-          <span className="text-[9px] tracking-[0.3em] uppercase">Scroll</span>
-          <div className="w-px h-10 bg-gradient-to-b from-white/40 to-transparent" />
-        </div>
+         <div className="relative h-full flex flex-col justify-center max-w-7xl mx-auto px-6 sm:px-10">
+           <div className="max-w-2xl">
+             <h1 className="font-serif text-5xl sm:text-6xl lg:text-7xl text-[#302521] leading-[1.1] mb-6">
+               Timeless Drapes.<br /><em className="text-[#A25524] not-italic">Effortless Elegance.</em>
+             </h1>
+             <p className="text-[#302521] text-base sm:text-lg font-light leading-relaxed mb-10 max-w-lg">
+               Discover our curated collection of sarees, woven for moments that matter.
+             </p>
+             <div className="flex flex-wrap gap-4">
+               <button onClick={() => setPage('shop')}
+                 className="bg-[#063737] text-white px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-medium hover:bg-[#A25524] hover:text-white transition-colors duration-300">
+                 Shop Collection
+               </button>
+               <button onClick={() => setPage('shop')}
+                 className="border border-[#063737] bg-transparent text-[#063737] px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-light hover:border-[#A25524] hover:text-[#A25524] transition-colors duration-300">
+                 Explore Sarees
+               </button>
+             </div>
+           </div>
+         </div>
+         {/* Scroll hint */}
+         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-[#302521]/60">
+           <span className="text-[9px] tracking-[0.3em] uppercase">Scroll</span>
+           <div className="h-10 w-px bg-[#302521]/60" />
+         </div>
       </section>
 
       {/* Category Cards */}
@@ -871,22 +899,22 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
 
   useEffect(() => {
     const cards = document.querySelectorAll<HTMLElement>('.shop-product-card')
-    if (!cards.length || !(window as any).gsap) return
+    if (!cards.length || !window.gsap) return
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const media = (window as any).gsap.matchMedia()
+    const media = window.gsap.matchMedia()
 
     if (reducedMotion) {
-      ;(window as any).gsap.set(cards, { autoAlpha: 1, x: 0 })
+      window.gsap.set(cards, { autoAlpha: 1, x: 0 })
       return () => media.revert()
     }
 
     media.add('(min-width: 768px)', () => {
-      ;(window as any).gsap.fromTo(cards, { autoAlpha: 0, x: 60 }, { autoAlpha: 1, x: 0, duration: 0.55, ease: 'power3.out', stagger: 0.08 })
+      window.gsap.fromTo(cards, { autoAlpha: 0, x: 60 }, { autoAlpha: 1, x: 0, duration: 0.55, ease: 'power3.out', stagger: 0.08 })
     })
 
     media.add('(max-width: 767px)', () => {
-      ;(window as any).gsap.fromTo(cards, { autoAlpha: 0, x: 24 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 })
+      window.gsap.fromTo(cards, { autoAlpha: 0, x: 24 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 })
     })
 
     return () => media.revert()
@@ -991,18 +1019,24 @@ function ProductPage({ setPage, product, onAdd, onWishlist, wishlist }: {
   wishlist: number[]
 }) {
   const { products } = useProductsStore()
-  const p = product ?? products[0]
-  const [qty, setQty] = useState(1)
-  const [addedToBag, setAddedToBag] = useState(false)
-  const [heartPop, setHeartPop] = useState(false)
-  const [pincode, setPincode] = useState('')
-  const [delivery, setDelivery] = useState<string | null>(null)
-  const [openSection, setOpenSection] = useState<string | null>('Product Description')
-  const inWish = wishlist.includes(p.id)
+const p = product ?? products[0]
 
-  // Build deduplicated image list; exclude logo placeholder from thumbnails
-  const mainImg = getProductMainImage(p)
-  const [selectedImage, setSelectedImage] = useState(mainImg)
+const [qty, setQty] = useState(1)
+const [addedToBag, setAddedToBag] = useState(false)
+const [heartPop, setHeartPop] = useState(false)
+const [pincode, setPincode] = useState('')
+const [delivery, setDelivery] = useState<string | null>(null)
+const [openSection, setOpenSection] = useState<string | null>('Product Description')
+
+// Build deduplicated image list
+const mainImg = p ? getProductMainImage(p) : ''
+const [selectedImage, setSelectedImage] = useState(mainImg)
+
+if (!p) {
+  return <div>Loading product...</div>
+}
+
+const inWish = wishlist.includes(p.id)
 
   const rawImages: string[] = []
   if (p.image) {
@@ -1416,7 +1450,7 @@ function CheckoutPage({
     let active = true
     setSavedAddressesLoading(true)
 
-    fetch('http://127.0.0.1:8000/api/customer/addresses', {
+    fetch('http://localhost:5000/api/addresses', {
       headers: {
         Authorization: `Bearer ${customerToken}`,
         Accept: 'application/json',
@@ -1506,7 +1540,7 @@ function CheckoutPage({
     // When logged-in customer enters a new address and wants to save it to their account
     if (customerToken && (selectedAddressId === 'new' || savedAddresses.length === 0) && saveToAccount) {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+        const response = await fetch('http://localhost:5000/api/addresses', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1577,7 +1611,7 @@ function CheckoutPage({
       : `${address}, ${city}, ${state} - ${pin}`
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/orders', {
+      const response = await fetch('http://localhost:5000/api/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2010,7 +2044,7 @@ function OrderTrackingPage({
     const fetchOrder = async () => {
       try {
         const response = await fetch(
-          `http://127.0.0.1:8000/api/customer/orders/${encodeURIComponent(orderNumber)}`,
+          `http://localhost:5000/api/my-orders/${encodeURIComponent(orderNumber)}`,
           { headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' } },
         )
         const data = await response.json().catch(() => ({}))
@@ -2201,7 +2235,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setLoginError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/customer/login', {
+      const response = await fetch('http://localhost:5000/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(login),
@@ -2229,7 +2263,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setRegistrationMessage(null)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/register', {
+      const response = await fetch('http://localhost:5000/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(registration),
@@ -2263,7 +2297,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setProfileMessage(null)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/customer/user', {
+      const response = await fetch('http://localhost:5000/api/customer/user', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2307,7 +2341,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
 
     const loadProfile = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/customer/user', {
+        const response = await fetch('http://localhost:5000/api/customer/user', {
           headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
         })
         const data = await response.json().catch(() => ({}))
@@ -2343,7 +2377,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setMyOrdersLoading(true)
     const fetchMyOrders = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/customer/orders', {
+        const response = await fetch('http://localhost:5000/api/my-orders', {
           headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
         })
 
@@ -2388,7 +2422,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressesLoading(true)
     const fetchAddresses = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+        const response = await fetch('http://localhost:5000/api/addresses', {
           headers: {
             Authorization: `Bearer ${customerSession.token}`,
             Accept: 'application/json',
@@ -2477,8 +2511,8 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     try {
       const isEditing = Boolean(editingAddress)
       const url = isEditing
-        ? `http://127.0.0.1:8000/api/customer/addresses/${editingAddress!.id}`
-        : 'http://127.0.0.1:8000/api/customer/addresses'
+        ? `http://localhost:5000/api/addresses/${editingAddress!.id}`
+        : 'http://localhost:5000/api/addresses'
 
       const response = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
@@ -2509,7 +2543,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
       }
 
       // Refresh address list to sync default states
-      const listResponse = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+      const listResponse = await fetch('http://localhost:5000/api/addresses', {
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
@@ -2539,8 +2573,8 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressActionId(id)
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/customer/addresses/${id}/default`, {
-        method: 'PATCH',
+      const response = await fetch(`http://localhost:5000/api/addresses/${id}/default`, {
+        method: 'PUT',
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
@@ -2578,7 +2612,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressActionId(id)
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/customer/addresses/${id}`, {
+      const response = await fetch(`http://localhost:5000/api/addresses/${id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
@@ -2590,7 +2624,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
       if (!response.ok) throw new Error(data.message || 'Failed to delete address.')
 
       // Refresh list to properly reflect any new default promotion
-      const listResponse = await fetch('http://127.0.0.1:8000/api/customer/addresses', {
+      const listResponse = await fetch('http://localhost:5000/api/addresses', {
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
@@ -3144,7 +3178,7 @@ function ContactPage({ setPage, storeSettings }: { setPage: (p: Page) => void, s
     setFeedback(null)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/contact-messages', {
+      const response = await fetch('http://localhost:5000/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(form),
@@ -3262,7 +3296,7 @@ function AdminLoginPage({ setPage, onLoginSuccess }: { setPage: (p: Page) => voi
     setLoginError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/login', {
+      const response = await fetch('http://localhost:5000/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -3397,7 +3431,7 @@ const [ordersLoading, setOrdersLoading] = useState(false)
     setDashboardStatsError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/dashboard', {
+      const response = await fetch('http://localhost:5000/api/admin/dashboard', {
         headers: {
           Authorization: `Bearer ${adminSession.token}`,
           Accept: 'application/json',
@@ -3459,7 +3493,7 @@ useEffect(() => {
       setOrdersError('')
 
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/orders', {
+        const response = await fetch('http://localhost:5000/api/orders', {
           headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
         })
 
@@ -3487,7 +3521,7 @@ useEffect(() => {
     setOrderStatusErrors(current => ({ ...current, [order.id]: '' }))
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/orders/${order.id}`, {
+      const response = await fetch(`http://localhost:5000/api/orders/${order.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -3598,7 +3632,7 @@ imageFiles: [] as File[],
     setCategoriesError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/categories')
+      const response = await fetch('http://localhost:5000/api/categories')
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
@@ -3627,7 +3661,7 @@ imageFiles: [] as File[],
     setOffersError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/offers')
+      const response = await fetch('http://localhost:5000/api/offers')
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) throw new Error(data.message || 'Failed to load offers')
@@ -3655,7 +3689,7 @@ imageFiles: [] as File[],
       }
 
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/customers', {
+        const response = await fetch('http://localhost:5000/api/admin/customers', {
           headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
         })
         const data = await response.json().catch(() => ({}))
@@ -3668,7 +3702,23 @@ imageFiles: [] as File[],
           throw new Error('The customers response was invalid')
         }
 
-        setCustomers(data)
+        const mappedCustomers = Array.isArray(data)
+          ? data.map((customer: any) => ({
+              name: String(customer.name ?? ''),
+              email: customer.email ?? '',
+              phone: typeof customer.phone === 'string' && customer.phone
+                ? customer.phone
+                : Array.isArray(customer.addresses) && customer.addresses.length > 0
+                  ? String(customer.addresses[0]?.phone ?? '')
+                  : '',
+              orders: Number(customer.order_count ?? customer.orders?.length ?? 0),
+              spend: Number(customer.spend ?? customer.orders?.reduce((sum: number, order: any) => sum + Number(order.total_amount ?? order.amount ?? 0), 0) ?? 0),
+              joined_at: customer.created_at ?? customer.joined_at ?? null,
+              is_active: customer.is_active ?? true,
+            }))
+          : []
+
+        setCustomers(mappedCustomers)
       } catch (error) {
         console.error('Error fetching customers:', error)
         setCustomersError(error instanceof Error ? error.message : 'Failed to load customers')
@@ -3692,7 +3742,7 @@ imageFiles: [] as File[],
     setStoreSettingsMessage('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+      const response = await fetch('http://localhost:5000/api/admin/store-settings', {
         headers: { 'Authorization': `Bearer ${adminSession.token}`, 'Accept': 'application/json' },
       })
       const data = await response.json().catch(() => ({}))
@@ -3721,7 +3771,7 @@ imageFiles: [] as File[],
     setInboxError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/contact-messages', {
+      const response = await fetch('http://localhost:5000/api/admin/contact-messages', {
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
           'Accept': 'application/json',
@@ -3758,8 +3808,8 @@ imageFiles: [] as File[],
     if (!adminSession) return
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/contact-messages/${messageId}/read`, {
-        method: 'PATCH',
+      const response = await fetch(`http://localhost:5000/api/admin/contact-messages/${messageId}`, {
+        method: 'PUT',
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
           'Content-Type': 'application/json',
@@ -3815,7 +3865,7 @@ imageFiles: [] as File[],
     setStoreSettingsMessage('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/settings', {
+      const response = await fetch('http://localhost:5000/api/admin/store-settings', {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
@@ -3893,11 +3943,15 @@ imageFiles: [] as File[],
       const isEditing = categoryDialog === 'edit' && selectedCategory
       const response = await fetch(
         isEditing
-          ? `http://127.0.0.1:8000/api/categories/${selectedCategory.id}`
-          : 'http://127.0.0.1:8000/api/categories',
+          ? `http://localhost:5000/api/admin/categories/${selectedCategory.id}`
+          : 'http://localhost:5000/api/admin/categories',
         {
-          method: isEditing ? 'PATCH' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: isEditing ? 'PUT' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${adminSession?.token ?? ''}`,
+          },
           body: JSON.stringify({
             name: categoryForm.name,
             description: categoryForm.description,
@@ -3929,8 +3983,12 @@ imageFiles: [] as File[],
     setCategoryActionError('')
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/categories/${selectedCategory.id}`, {
+      const response = await fetch(`http://localhost:5000/api/admin/categories/${selectedCategory.id}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${adminSession?.token ?? ''}`,
+          'Accept': 'application/json',
+        },
       })
       const data = await response.json().catch(() => ({}))
 
@@ -3985,10 +4043,14 @@ imageFiles: [] as File[],
     try {
       const editing = offerDialog === 'edit' && selectedOffer
       const response = await fetch(
-        editing ? `http://127.0.0.1:8000/api/offers/${selectedOffer.id}` : 'http://127.0.0.1:8000/api/offers',
+        editing ? `http://localhost:5000/api/admin/offers/${selectedOffer.id}` : 'http://localhost:5000/api/admin/offers',
         {
-          method: editing ? 'PATCH' : 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          method: editing ? 'PUT' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${adminSession?.token ?? ''}`,
+          },
           body: JSON.stringify(offerForm),
         }
       )
@@ -4017,7 +4079,13 @@ imageFiles: [] as File[],
     setOfferActionError('')
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/offers/${selectedOffer.id}`, { method: 'DELETE' })
+      const response = await fetch(`http://localhost:5000/api/admin/offers/${selectedOffer.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${adminSession?.token ?? ''}`,
+          'Accept': 'application/json',
+        },
+      })
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
@@ -4067,13 +4135,14 @@ imageFiles: [] as File[],
     })
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/products/${product.id}`, {
+      const response = await fetch(`http://localhost:5000/api/admin/products/${product.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'Authorization': `Bearer ${adminSession?.token ?? ''}`,
         },
-        body: JSON.stringify({ stock, in_stock: stock > 0 }),
+        body: JSON.stringify({ stock, inStock: stock > 0 }),
       })
       const data = await response.json().catch(() => ({}))
 
@@ -4149,8 +4218,12 @@ imageFiles: [] as File[],
       formData.append('title', newVideo.title || 'Festive Edit')
       formData.append('video', newVideo.videoFile)
 
-      const response = await fetch('http://127.0.0.1:8000/api/videos', {
+      const response = await fetch('http://localhost:5000/api/admin/videos', {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+          Accept: 'application/json',
+        },
         body: formData,
       })
       const responseData = await response.json().catch(() => ({}))
@@ -4172,7 +4245,7 @@ imageFiles: [] as File[],
       const storageUrl = (path: string | null) => path
         ? path.startsWith('http')
           ? path
-          : `http://127.0.0.1:8000/storage/${path.replace(/^\/+/, '')}`
+          : `http://localhost:5000/storage/${path.replace(/^\/+/, '')}`
         : ''
 
       setVideos(current => [...current, {
@@ -4200,8 +4273,12 @@ imageFiles: [] as File[],
     setDeletingVideoId(id)
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/videos/${id}`, {
+      const response = await fetch(`http://localhost:5000/api/admin/videos/${id}`, {
         method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+          Accept: 'application/json',
+        },
       })
 
       if (!response.ok) {
@@ -4238,55 +4315,44 @@ imageFiles: [] as File[],
   }
 
   try {
-    const response = await fetch(
-      'http://127.0.0.1:8000/api/products',
-      {
-        method: 'POST',
-       body: (() => {
-  const formData = new FormData()
+    const calculatedPrice = originalPrice * (1 - discount / 100)
+    const formData = new FormData()
 
-  formData.append('name', newSaree.name)
-  formData.append('description', newSaree.description || '')
-
-  formData.append('original_price', String(originalPrice))
-  formData.append('discount', String(discount))
-
-  formData.append('category', newSaree.category)
-  formData.append('badge', 'NEW')
-  formData.append('fabric', newSaree.fabric || '')
-  formData.append('color', newSaree.color || '')
-  formData.append('length', newSaree.length)
-formData.append('blouse', newSaree.blouse)
-formData.append('occasion', newSaree.occasion)
-  formData.append('sku', newSaree.sku || '')
-
-  formData.append('stock', String(stock))
-  formData.append('in_stock', stock > 0 ? '1' : '0')
-  formData.append('is_active', '1')
-
-  formData.append(
-    'return_exchange',
-    newSaree.returnExchange || ''
-  )
-
-  formData.append(
-    'manufactured_by',
-    newSaree.manufacturedBy || ''
-  )
-
-  formData.append(
-    'marketed_by',
-    newSaree.marketedBy || ''
-  )
+    formData.append('name', newSaree.name)
+    formData.append('sku', newSaree.sku || '')
+    formData.append('category', newSaree.category)
+    formData.append('price', String(calculatedPrice))
+    formData.append('originalPrice', String(originalPrice))
+    formData.append('discount', String(discount))
+    formData.append('stock', String(stock))
+    formData.append('fabric', newSaree.fabric || '')
+    formData.append('length', newSaree.length)
+    formData.append('blouse', newSaree.blouse)
+    formData.append('occasion', newSaree.occasion)
+    formData.append('color', newSaree.color || '')
+    formData.append('description', newSaree.description || '')
+    formData.append('badge', 'NEW')
+    formData.append('returnExchange', newSaree.returnExchange || '')
+    formData.append('manufacturedBy', newSaree.manufacturedBy || '')
+    formData.append('marketedBy', newSaree.marketedBy || '')
+    formData.append('inStock', stock > 0 ? 'true' : 'false')
+    formData.append('isActive', 'true')
 
     if (newSaree.imageFiles.length > 0) {
-  newSaree.imageFiles.forEach((file) => {
-    formData.append('images[]', file)
-  })
-}
+      newSaree.imageFiles.forEach((file) => {
+        formData.append('images[]', file)
+      })
+    }
 
-  return formData
-})(),
+    const response = await fetch(
+      'http://localhost:5000/api/admin/products',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+          Accept: 'application/json',
+        },
+        body: formData,
       }
     )
 
@@ -4360,13 +4426,19 @@ const deleteSaree = async (id: number) => {
 
   try {
     const response = await fetch(
-      `http://127.0.0.1:8000/api/products/${id}`,
+      `http://localhost:5000/api/admin/products/${id}`,
       {
         method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+          Accept: 'application/json',
+        },
       }
     )
 
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error(errorData)
       alert('Failed to delete saree')
       return
     }
@@ -4395,58 +4467,48 @@ const updateSaree = async () => {
   if (!editingProduct) return
 
   try {
+    // Build FormData with camelCase field names for the Node backend
+    const formData = new FormData()
+
+    formData.append('name', editingProduct.name)
+    formData.append('sku', editingProduct.sku ?? '')
+    formData.append('category', editingProduct.category)
+
+    const originalPrice = editingProduct.originalPrice ?? 0
+    const discount = editingProduct.discount ?? 0
+    // Selling price derived from originalPrice and discount percentage
+    const sellingPrice = originalPrice * (1 - discount / 100)
+    formData.append('price', String(sellingPrice))
+    formData.append('originalPrice', String(originalPrice))
+    formData.append('discount', String(discount))
+
+    formData.append('stock', String(editingProduct.stock ?? 0))
+    formData.append('fabric', editingProduct.fabric ?? '')
+    formData.append('length', editingProduct.length ?? '')
+    formData.append('blouse', editingProduct.blouse ?? '')
+    formData.append('occasion', editingProduct.occasion ?? '')
+    formData.append('color', editingProduct.color ?? '')
+    formData.append('description', editingProduct.description ?? '')
+    formData.append('returnExchange', editingProduct.returnExchange ?? '')
+    formData.append('manufacturedBy', editingProduct.manufacturedBy ?? '')
+    formData.append('marketedBy', editingProduct.marketedBy ?? '')
+    formData.append('inStock', editingProduct.inStock ? 'true' : 'false')
+    formData.append('isActive', 'true')
+
+    // Only attach a new image when the user has selected one
+    if (editingProduct.imageFile) {
+      formData.append('images[]', editingProduct.imageFile)
+    }
+
     const response = await fetch(
-      `http://127.0.0.1:8000/api/products/${editingProduct.id}`,
+      `http://localhost:5000/api/admin/products/${editingProduct.id}`,
       {
-        method: 'POST',
-       body: (() => {
-  const formData = new FormData()
-
-  formData.append('name', editingProduct.name)
-  formData.append('sku', editingProduct.sku)
-  formData.append('category', editingProduct.category)
-  formData.append(
-    'original_price',
-    String(editingProduct.originalPrice ?? 0)
-  )
-  formData.append(
-    'discount',
-    String(editingProduct.discount ?? 0)
-  )
-  formData.append(
-    'stock',
-    String(editingProduct.stock ?? 0)
-  )
-  formData.append('fabric', editingProduct.fabric)
-  formData.append('length', editingProduct.length ?? '')
-formData.append('blouse', editingProduct.blouse ?? '')
-formData.append('occasion', editingProduct.occasion ?? '')
-  formData.append('color', editingProduct.color)
-  formData.append(
-    'description',
-    editingProduct.description ?? ''
-  )
-  formData.append(
-    'return_exchange',
-    editingProduct.returnExchange ?? ''
-  )
-  formData.append(
-    'manufactured_by',
-    editingProduct.manufacturedBy ?? ''
-  )
-  formData.append(
-    'marketed_by',
-    editingProduct.marketedBy ?? ''
-  )
-
-  if (editingProduct.imageFile) {
-    formData.append('image', editingProduct.imageFile)
-  }
-
-  formData.append('_method', 'PUT')
-
-  return formData
-})(),
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminSession?.token ?? ''}`,
+          Accept: 'application/json',
+        },
+        body: formData,
       }
     )
 
@@ -4457,40 +4519,41 @@ formData.append('occasion', editingProduct.occasion ?? '')
       return
     }
 
+    // Node API response (formatProductResponse) uses snake_case for some fields
     const updatedProduct = await response.json()
 
     setProducts(current =>
-  current.map(product =>
-    product.id === updatedProduct.id
-      ? {
-          ...product,
-          name: updatedProduct.name,
-          sku: updatedProduct.sku,
-          category: updatedProduct.category,
-          price: Number(updatedProduct.price),
-          originalPrice:
-            updatedProduct.original_price !== null
-              ? Number(updatedProduct.original_price)
-              : undefined,
-          discount:
-            updatedProduct.discount !== null
-              ? Number(updatedProduct.discount)
-              : 0,
-          stock: Number(updatedProduct.stock) || 0,
-          fabric: updatedProduct.fabric ?? '',
-          color: updatedProduct.color ?? '',
-          length: updatedProduct.length ?? '',
-blouse: updatedProduct.blouse ?? '',
-occasion: updatedProduct.occasion ?? '',
-          description: updatedProduct.description ?? undefined,
-          returnExchange: updatedProduct.return_exchange ?? undefined,
-          manufacturedBy: updatedProduct.manufactured_by ?? undefined,
-          marketedBy: updatedProduct.marketed_by ?? undefined,
-          inStock: Boolean(updatedProduct.in_stock),
-        }
-      : product
-  )
-)
+      current.map(product =>
+        product.id === updatedProduct.id
+          ? {
+              ...product,
+              name: updatedProduct.name,
+              sku: updatedProduct.sku,
+              category: updatedProduct.category,
+              price: Number(updatedProduct.price),
+              originalPrice:
+                updatedProduct.original_price !== null
+                  ? Number(updatedProduct.original_price)
+                  : undefined,
+              discount:
+                updatedProduct.discount !== null
+                  ? Number(updatedProduct.discount)
+                  : 0,
+              stock: Number(updatedProduct.stock) || 0,
+              fabric: updatedProduct.fabric ?? '',
+              color: updatedProduct.color ?? '',
+              length: updatedProduct.length ?? '',
+              blouse: updatedProduct.blouse ?? '',
+              occasion: updatedProduct.occasion ?? '',
+              description: updatedProduct.description ?? undefined,
+              returnExchange: updatedProduct.return_exchange ?? undefined,
+              manufacturedBy: updatedProduct.manufactured_by ?? undefined,
+              marketedBy: updatedProduct.marketed_by ?? undefined,
+              inStock: Boolean(updatedProduct.in_stock),
+            }
+          : product
+      )
+    )
 
     setEditingProduct(null)
 
@@ -6040,7 +6103,7 @@ export default function App() {
   useEffect(() => {
     const loadPublicStoreSettings = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/settings', {
+        const response = await fetch('http://localhost:5000/api/settings', {
           headers: { Accept: 'application/json' },
           cache: 'no-store',
         })
@@ -6060,7 +6123,7 @@ export default function App() {
     if (!customerSession) return
 
     let active = true
-    void fetch('http://127.0.0.1:8000/api/customer/user', {
+    void fetch('http://localhost:5000/api/customer/user', {
       headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
     }).then(response => {
       if (active && (response.status === 401 || response.status === 403)) {
@@ -6113,29 +6176,11 @@ export default function App() {
     setCustomerSession(null)
     setPage('account-sign-in')
 
-    if (session) {
-      try {
-        await fetch('http://127.0.0.1:8000/api/customer/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${session.token}`, Accept: 'application/json' },
-        })
-      } catch (error) {
-        console.error('Customer sign-out error:', error)
-      }
-    }
+    // Node JWT authentication is stateless; session cleared above
   }
 
   const logoutAdmin = async () => {
-    if (adminSession) {
-      try {
-        await fetch('http://127.0.0.1:8000/api/admin/logout', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${adminSession.token}`, 'Accept': 'application/json' },
-        })
-      } catch (error) {
-        console.error('Admin sign-out error:', error)
-      }
-    }
+    // Node JWT authentication is stateless; session cleared below
 
     localStorage.removeItem(ADMIN_SESSION_KEY)
     sessionStorage.removeItem(ADMIN_SESSION_KEY)
@@ -6214,11 +6259,16 @@ export default function App() {
     }
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/customer/wishlist', {
-        method: nextState ? 'POST' : 'DELETE',
-        headers: nextState ? { ...headers, 'Content-Type': 'application/json' } : headers,
-        body: nextState ? JSON.stringify({ product_id: id }) : undefined,
-      })
+      const response = await fetch(
+        nextState
+          ? 'http://localhost:5000/api/wishlist'
+          : `http://localhost:5000/api/wishlist/${id}`,
+        {
+          method: nextState ? 'POST' : 'DELETE',
+          headers: nextState ? { ...headers, 'Content-Type': 'application/json' } : headers,
+          body: nextState ? JSON.stringify({ product_id: id }) : undefined,
+        }
+      )
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '')
@@ -6279,7 +6329,7 @@ const refreshProducts = async () => {
   setProductsError('')
 
   try {
-    const response = await fetch('http://127.0.0.1:8000/api/products')
+    const response = await fetch('http://localhost:5000/api/products')
     if (!response.ok) {
       throw new Error('Failed to fetch products')
     }
@@ -6336,7 +6386,7 @@ useEffect(() => {
 useEffect(() => {
   const loadVideos = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/videos')
+      const response = await fetch('http://localhost:5000/api/videos')
       if (!response.ok) {
         throw new Error('Unable to load videos.')
       }
@@ -6349,7 +6399,7 @@ useEffect(() => {
       const storageUrl = (path: string | null | undefined) => {
         if (!path) return ''
         if (/^https?:\/\//i.test(path)) return path
-        return `http://127.0.0.1:8000/storage/${path.replace(/^\/+/, '')}`
+        return `http://localhost:5000/storage/${path.replace(/^\/+/, '')}`
       }
 
       const mappedVideos: EditorialVideo[] = data.map((video: {
@@ -6391,7 +6441,7 @@ useEffect(() => {
 
     setWishlistLoading(true)
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/customer/wishlist', {
+      const response = await fetch('http://localhost:5000/api/wishlist', {
         headers: {
           'X-Session-ID': sessionId,
           Authorization: `Bearer ${customerSession.token}`,

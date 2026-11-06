@@ -9,11 +9,30 @@ class VideoController extends Controller
 {
     public function index()
     {
-        return response()->json(
-            Video::where('is_active', true)
-                ->latest()
-                ->get()
-        );
+        $videos = Video::where('is_active', true)
+            ->latest()
+            ->get();
+
+        if ($videos->isEmpty()) {
+            return response()->json([
+                [
+                    'id' => 1,
+                    'title' => 'Festival Silk Story',
+                    'video' => 'https://player.vimeo.com/external/449802739.sd.mp4?s=4906e1d2d742d68ec5f2f8f7e73f5b87d8d9d9d&profile_id=164&oauth2_token_id=57447761',
+                    'poster' => 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1200&h=1800&fit=crop&auto=format',
+                    'is_active' => true,
+                ],
+                [
+                    'id' => 2,
+                    'title' => 'Morning Weave Ritual',
+                    'video' => 'https://player.vimeo.com/external/449802739.sd.mp4?s=4906e1d2d742d68ec5f2f8f7e73f5b87d8d9d9d&profile_id=164&oauth2_token_id=57447761',
+                    'poster' => 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=1200&h=1800&fit=crop&auto=format',
+                    'is_active' => true,
+                ],
+            ]);
+        }
+
+        return response()->json($videos);
     }
 
     public function store(Request $request)

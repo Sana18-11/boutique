@@ -79,8 +79,10 @@ Route::post('/wishlist', [WishlistController::class, 'store']);
 Route::delete('/wishlist/{productId}', [WishlistController::class, 'destroy']);
 
 Route::get('/videos', [VideoController::class, 'index']);
-Route::post('/videos', [VideoController::class, 'store']);
-Route::delete('/videos/{id}', [VideoController::class, 'destroy']);
+Route::middleware(['auth:sanctum', 'admin'])->group(function () {
+    Route::post('/videos', [VideoController::class, 'store']);
+    Route::delete('/videos/{id}', [VideoController::class, 'destroy']);
+});
 
 Route::get('/debug-upload-settings', function () {
     return response()->json([
