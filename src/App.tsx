@@ -35,6 +35,24 @@ const INSTAGRAM_URL = 'https://www.instagram.com/yaale_sarees?stkn=dXVoZHI2dDhob
 const DEFAULT_CONTACT_EMAIL = 'hello@yaale.in'
 const DEFAULT_CONTACT_PHONE = '+91 98765 43210'
 
+// Backend address. Set VITE_API_URL (e.g. in .env.production) for deployed builds.
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:5000').replace(/\/+$/, '')
+
+// Shipping defaults; must match DEFAULT_SHIPPING_FEE / DEFAULT_FREE_SHIPPING_THRESHOLD in the backend.
+const DEFAULT_SHIPPING_FEE = 250
+const DEFAULT_FREE_SHIPPING_THRESHOLD = 10000
+
+/** Shipping for a subtotal, using the store settings when set. Mirrors the backend's calculateShipping. */
+const calculateShipping = (subtotal: number, settings: StoreSettingsForm): number => {
+  const parse = (value: string, fallback: number) => {
+    const n = value.trim() === '' ? NaN : Number(value)
+    return Number.isFinite(n) && n >= 0 ? n : fallback
+  }
+  const fee = parse(settings.shipping_fee, DEFAULT_SHIPPING_FEE)
+  const threshold = parse(settings.free_shipping_threshold, DEFAULT_FREE_SHIPPING_THRESHOLD)
+  return subtotal > threshold ? 0 : fee
+}
+
 const storeSettingsFromApi = (data: Record<string, unknown>): StoreSettingsForm => ({
   store_name: String(data.store_name ?? ''),
   store_email: String(data.store_email ?? ''),
@@ -54,7 +72,7 @@ const productImageUrl = (image: unknown) => {
   if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:)/i.test(path)) return path
 
   const storagePath = path.replace(/^\/+/, '').replace(/^storage\//i, '')
-  return storagePath ? `http://localhost:5000/storage/${storagePath}` : ''
+  return storagePath ? `${API_BASE_URL}/storage/${storagePath}` : ''
 }
 
 const getProductMainImage = (p: Partial<Product> | null | undefined): string => {
@@ -1274,8 +1292,9 @@ const inWish = wishlist.includes(p.id)
 }
 
 function CartPage({ cart, setCart, setPage }: { cart: CartItem[], setCart: React.Dispatch<React.SetStateAction<CartItem[]>>, setPage: (p: Page) => void }) {
+  const storeSettings = useContext(StoreSettingsContext)
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
-  const shipping = subtotal > 10000 ? 0 : 250
+  const shipping = calculateShipping(subtotal, storeSettings)
   const total = subtotal + shipping
 
   const updateQty = (id: number, qty: number) => {
@@ -1436,10 +1455,11 @@ function CheckoutPage({
   const placingOrderRef = useRef(false)
   const [payMethod, setPayMethod] = useState('UPI')
 
+  const storeSettings = useContext(StoreSettingsContext)
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
-  const shipping = subtotal > 10000 ? 0 : 250
+  const shipping = calculateShipping(subtotal, storeSettings)
 
-  const update = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+  const update =(k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   useEffect(() => {
     if (!customerToken) {
@@ -1450,7 +1470,7 @@ function CheckoutPage({
     let active = true
     setSavedAddressesLoading(true)
 
-    fetch('http://localhost:5000/api/addresses', {
+    fetch(`${API_BASE_URL}/api/addresses`, {
       headers: {
         Authorization: `Bearer ${customerToken}`,
         Accept: 'application/json',
@@ -1540,7 +1560,7 @@ function CheckoutPage({
     // When logged-in customer enters a new address and wants to save it to their account
     if (customerToken && (selectedAddressId === 'new' || savedAddresses.length === 0) && saveToAccount) {
       try {
-        const response = await fetch('http://localhost:5000/api/addresses', {
+        const response = await fetch(`${API_BASE_URL}/api/addresses`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1610,8 +1630,20 @@ function CheckoutPage({
       ? `${address}, Near ${landmark}, ${city}, ${state} - ${pin}`
       : `${address}, ${city}, ${state} - ${pin}`
 
+    // Use the saved address by id when the delivery details still match it,
+    // so the backend does not need the typed copy. Edited details are sent as typed.
+    const selectedSavedAddress = savedAddresses.find(a => String(a.id) === String(selectedAddressId))
+    const matchesSavedAddress = !!selectedSavedAddress &&
+      selectedSavedAddress.name === name &&
+      selectedSavedAddress.phone === phone &&
+      selectedSavedAddress.address_line === address &&
+      (selectedSavedAddress.landmark || '') === landmark &&
+      selectedSavedAddress.city === city &&
+      selectedSavedAddress.state === state &&
+      selectedSavedAddress.pin_code === pin
+
     try {
-      const response = await fetch('http://localhost:5000/api/orders', {
+      const response = await fetch(`${API_BASE_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1619,6 +1651,7 @@ function CheckoutPage({
           ...(customerToken ? { Authorization: `Bearer ${customerToken}` } : {}),
         },
         body: JSON.stringify({
+          ...(matchesSavedAddress ? { address_id: selectedSavedAddress!.id } : {}),
           customer_name: name,
           customer_phone: phone,
           customer_address: fullAddress,
@@ -1627,7 +1660,6 @@ function CheckoutPage({
           city,
           state,
           pin_code: pin,
-          total_amount: subtotal + shipping,
           items: cart.map(item => ({
             product_id: item.id,
             product_name: item.name,
@@ -2044,7 +2076,7 @@ function OrderTrackingPage({
     const fetchOrder = async () => {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/my-orders/${encodeURIComponent(orderNumber)}`,
+          `${API_BASE_URL}/api/my-orders/${encodeURIComponent(orderNumber)}`,
           { headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' } },
         )
         const data = await response.json().catch(() => ({}))
@@ -2235,7 +2267,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setLoginError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/auth/login', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(login),
@@ -2263,7 +2295,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setRegistrationMessage(null)
 
     try {
-      const response = await fetch('http://localhost:5000/api/auth/register', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(registration),
@@ -2297,7 +2329,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setProfileMessage(null)
 
     try {
-      const response = await fetch('http://localhost:5000/api/customer/user', {
+      const response = await fetch(`${API_BASE_URL}/api/customer/user`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2341,7 +2373,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
 
     const loadProfile = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/customer/user', {
+        const response = await fetch(`${API_BASE_URL}/api/customer/user`, {
           headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
         })
         const data = await response.json().catch(() => ({}))
@@ -2377,7 +2409,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setMyOrdersLoading(true)
     const fetchMyOrders = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/my-orders', {
+        const response = await fetch(`${API_BASE_URL}/api/my-orders`, {
           headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
         })
 
@@ -2422,7 +2454,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressesLoading(true)
     const fetchAddresses = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/addresses', {
+        const response = await fetch(`${API_BASE_URL}/api/addresses`, {
           headers: {
             Authorization: `Bearer ${customerSession.token}`,
             Accept: 'application/json',
@@ -2511,8 +2543,8 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     try {
       const isEditing = Boolean(editingAddress)
       const url = isEditing
-        ? `http://localhost:5000/api/addresses/${editingAddress!.id}`
-        : 'http://localhost:5000/api/addresses'
+        ? `${API_BASE_URL}/api/addresses/${editingAddress!.id}`
+        : `${API_BASE_URL}/api/addresses`
 
       const response = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
@@ -2543,7 +2575,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
       }
 
       // Refresh address list to sync default states
-      const listResponse = await fetch('http://localhost:5000/api/addresses', {
+      const listResponse = await fetch(`${API_BASE_URL}/api/addresses`, {
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
@@ -2573,7 +2605,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressActionId(id)
 
     try {
-      const response = await fetch(`http://localhost:5000/api/addresses/${id}/default`, {
+      const response = await fetch(`${API_BASE_URL}/api/addresses/${id}/default`, {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
@@ -2612,7 +2644,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
     setAddressActionId(id)
 
     try {
-      const response = await fetch(`http://localhost:5000/api/addresses/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/addresses/${id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
@@ -2624,7 +2656,7 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
       if (!response.ok) throw new Error(data.message || 'Failed to delete address.')
 
       // Refresh list to properly reflect any new default promotion
-      const listResponse = await fetch('http://localhost:5000/api/addresses', {
+      const listResponse = await fetch(`${API_BASE_URL}/api/addresses`, {
         headers: {
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
@@ -3178,7 +3210,7 @@ function ContactPage({ setPage, storeSettings }: { setPage: (p: Page) => void, s
     setFeedback(null)
 
     try {
-      const response = await fetch('http://localhost:5000/api/contact', {
+      const response = await fetch(`${API_BASE_URL}/api/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(form),
@@ -3296,7 +3328,7 @@ function AdminLoginPage({ setPage, onLoginSuccess }: { setPage: (p: Page) => voi
     setLoginError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/login', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -3431,7 +3463,7 @@ const [ordersLoading, setOrdersLoading] = useState(false)
     setDashboardStatsError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/dashboard', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/dashboard`, {
         headers: {
           Authorization: `Bearer ${adminSession.token}`,
           Accept: 'application/json',
@@ -3493,7 +3525,7 @@ useEffect(() => {
       setOrdersError('')
 
       try {
-        const response = await fetch('http://localhost:5000/api/orders', {
+        const response = await fetch(`${API_BASE_URL}/api/orders`, {
           headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
         })
 
@@ -3521,7 +3553,7 @@ useEffect(() => {
     setOrderStatusErrors(current => ({ ...current, [order.id]: '' }))
 
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${order.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -3632,7 +3664,7 @@ imageFiles: [] as File[],
     setCategoriesError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/categories')
+      const response = await fetch(`${API_BASE_URL}/api/categories`)
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
@@ -3661,7 +3693,7 @@ imageFiles: [] as File[],
     setOffersError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/offers')
+      const response = await fetch(`${API_BASE_URL}/api/offers`)
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) throw new Error(data.message || 'Failed to load offers')
@@ -3689,7 +3721,7 @@ imageFiles: [] as File[],
       }
 
       try {
-        const response = await fetch('http://localhost:5000/api/admin/customers', {
+        const response = await fetch(`${API_BASE_URL}/api/admin/customers`, {
           headers: { Authorization: `Bearer ${adminSession.token}`, Accept: 'application/json' },
         })
         const data = await response.json().catch(() => ({}))
@@ -3742,7 +3774,7 @@ imageFiles: [] as File[],
     setStoreSettingsMessage('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/store-settings', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/store-settings`, {
         headers: { 'Authorization': `Bearer ${adminSession.token}`, 'Accept': 'application/json' },
       })
       const data = await response.json().catch(() => ({}))
@@ -3771,7 +3803,7 @@ imageFiles: [] as File[],
     setInboxError('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/contact-messages', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/contact-messages`, {
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
           'Accept': 'application/json',
@@ -3808,7 +3840,7 @@ imageFiles: [] as File[],
     if (!adminSession) return
 
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/contact-messages/${messageId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/contact-messages/${messageId}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
@@ -3865,7 +3897,7 @@ imageFiles: [] as File[],
     setStoreSettingsMessage('')
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/store-settings', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/store-settings`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${adminSession.token}`,
@@ -3943,8 +3975,8 @@ imageFiles: [] as File[],
       const isEditing = categoryDialog === 'edit' && selectedCategory
       const response = await fetch(
         isEditing
-          ? `http://localhost:5000/api/admin/categories/${selectedCategory.id}`
-          : 'http://localhost:5000/api/admin/categories',
+          ? `${API_BASE_URL}/api/admin/categories/${selectedCategory.id}`
+          : `${API_BASE_URL}/api/admin/categories`,
         {
           method: isEditing ? 'PUT' : 'POST',
           headers: {
@@ -3983,7 +4015,7 @@ imageFiles: [] as File[],
     setCategoryActionError('')
 
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/categories/${selectedCategory.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/categories/${selectedCategory.id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${adminSession?.token ?? ''}`,
@@ -4043,7 +4075,7 @@ imageFiles: [] as File[],
     try {
       const editing = offerDialog === 'edit' && selectedOffer
       const response = await fetch(
-        editing ? `http://localhost:5000/api/admin/offers/${selectedOffer.id}` : 'http://localhost:5000/api/admin/offers',
+        editing ? `${API_BASE_URL}/api/admin/offers/${selectedOffer.id}` : `${API_BASE_URL}/api/admin/offers`,
         {
           method: editing ? 'PUT' : 'POST',
           headers: {
@@ -4079,7 +4111,7 @@ imageFiles: [] as File[],
     setOfferActionError('')
 
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/offers/${selectedOffer.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/offers/${selectedOffer.id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${adminSession?.token ?? ''}`,
@@ -4135,7 +4167,7 @@ imageFiles: [] as File[],
     })
 
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/products/${product.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/products/${product.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -4218,7 +4250,7 @@ imageFiles: [] as File[],
       formData.append('title', newVideo.title || 'Festive Edit')
       formData.append('video', newVideo.videoFile)
 
-      const response = await fetch('http://localhost:5000/api/admin/videos', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/videos`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${adminSession?.token ?? ''}`,
@@ -4245,7 +4277,7 @@ imageFiles: [] as File[],
       const storageUrl = (path: string | null) => path
         ? path.startsWith('http')
           ? path
-          : `http://localhost:5000/storage/${path.replace(/^\/+/, '')}`
+          : `${API_BASE_URL}/storage/${path.replace(/^\/+/, '')}`
         : ''
 
       setVideos(current => [...current, {
@@ -4273,7 +4305,7 @@ imageFiles: [] as File[],
     setDeletingVideoId(id)
 
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/videos/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/videos/${id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${adminSession?.token ?? ''}`,
@@ -4345,7 +4377,7 @@ imageFiles: [] as File[],
     }
 
     const response = await fetch(
-      'http://localhost:5000/api/admin/products',
+      `${API_BASE_URL}/api/admin/products`,
       {
         method: 'POST',
         headers: {
@@ -4426,7 +4458,7 @@ const deleteSaree = async (id: number) => {
 
   try {
     const response = await fetch(
-      `http://localhost:5000/api/admin/products/${id}`,
+      `${API_BASE_URL}/api/admin/products/${id}`,
       {
         method: 'DELETE',
         headers: {
@@ -4493,7 +4525,7 @@ const updateSaree = async () => {
     formData.append('manufacturedBy', editingProduct.manufacturedBy ?? '')
     formData.append('marketedBy', editingProduct.marketedBy ?? '')
     formData.append('inStock', editingProduct.inStock ? 'true' : 'false')
-    formData.append('isActive', 'true')
+    // isActive is deliberately not sent: editing must not un-hide a hidden product.
 
     // Only attach a new image when the user has selected one
     if (editingProduct.imageFile) {
@@ -4501,7 +4533,7 @@ const updateSaree = async () => {
     }
 
     const response = await fetch(
-      `http://localhost:5000/api/admin/products/${editingProduct.id}`,
+      `${API_BASE_URL}/api/admin/products/${editingProduct.id}`,
       {
         method: 'PUT',
         headers: {
@@ -4524,9 +4556,16 @@ const updateSaree = async () => {
 
     setProducts(current =>
       current.map(product =>
-        product.id === updatedProduct.id
+        // The API returns ids as strings; the local list stores numbers.
+        String(product.id) === String(updatedProduct.id)
           ? {
               ...product,
+              image: productImageUrl(updatedProduct.image) || product.image,
+              images: Array.isArray(updatedProduct.images)
+                ? updatedProduct.images
+                    .map((img: any) => productImageUrl(typeof img === 'string' ? img : img?.image))
+                    .filter(Boolean)
+                : product.images,
               name: updatedProduct.name,
               sku: updatedProduct.sku,
               category: updatedProduct.category,
@@ -6103,7 +6142,7 @@ export default function App() {
   useEffect(() => {
     const loadPublicStoreSettings = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/settings', {
+        const response = await fetch(`${API_BASE_URL}/api/settings`, {
           headers: { Accept: 'application/json' },
           cache: 'no-store',
         })
@@ -6123,7 +6162,7 @@ export default function App() {
     if (!customerSession) return
 
     let active = true
-    void fetch('http://localhost:5000/api/customer/user', {
+    void fetch(`${API_BASE_URL}/api/customer/user`, {
       headers: { Authorization: `Bearer ${customerSession.token}`, Accept: 'application/json' },
     }).then(response => {
       if (active && (response.status === 401 || response.status === 403)) {
@@ -6261,8 +6300,8 @@ export default function App() {
     try {
       const response = await fetch(
         nextState
-          ? 'http://localhost:5000/api/wishlist'
-          : `http://localhost:5000/api/wishlist/${id}`,
+          ? `${API_BASE_URL}/api/wishlist`
+          : `${API_BASE_URL}/api/wishlist/${id}`,
         {
           method: nextState ? 'POST' : 'DELETE',
           headers: nextState ? { ...headers, 'Content-Type': 'application/json' } : headers,
@@ -6329,7 +6368,7 @@ const refreshProducts = async () => {
   setProductsError('')
 
   try {
-    const response = await fetch('http://localhost:5000/api/products')
+    const response = await fetch(`${API_BASE_URL}/api/products`)
     if (!response.ok) {
       throw new Error('Failed to fetch products')
     }
@@ -6386,7 +6425,7 @@ useEffect(() => {
 useEffect(() => {
   const loadVideos = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/videos')
+      const response = await fetch(`${API_BASE_URL}/api/videos`)
       if (!response.ok) {
         throw new Error('Unable to load videos.')
       }
@@ -6399,7 +6438,7 @@ useEffect(() => {
       const storageUrl = (path: string | null | undefined) => {
         if (!path) return ''
         if (/^https?:\/\//i.test(path)) return path
-        return `http://localhost:5000/storage/${path.replace(/^\/+/, '')}`
+        return `${API_BASE_URL}/storage/${path.replace(/^\/+/, '')}`
       }
 
       const mappedVideos: EditorialVideo[] = data.map((video: {
@@ -6441,7 +6480,7 @@ useEffect(() => {
 
     setWishlistLoading(true)
     try {
-      const response = await fetch('http://localhost:5000/api/wishlist', {
+      const response = await fetch(`${API_BASE_URL}/api/wishlist`, {
         headers: {
           'X-Session-ID': sessionId,
           Authorization: `Bearer ${customerSession.token}`,

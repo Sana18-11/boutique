@@ -10,6 +10,7 @@ import path from "path";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
+import crypto from "crypto";
 
 
 dotenv.config();
@@ -29,62 +30,216 @@ function parseBool(value: unknown): boolean | undefined {
 
 const app = express();
 
-const productUploadDir = path.join(process.cwd(), "public", "storage", "products");
+const storageRoot = path.resolve(process.cwd(), "public", "storage");
 
-fs.mkdirSync(productUploadDir, { recursive: true });
+/** Error whose message is safe to show to the client with the given HTTP status. */
+class HttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
 
-const productStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, productUploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname).toLowerCase()}`;
-    cb(null, uniqueName);
-  },
+/**
+ * Upload allow-lists. The saved file's extension is chosen from the MIME type,
+ * never from the uploaded file name, and both must agree, so a file such as
+ * `x.html` labelled `image/png` is rejected instead of being served as HTML.
+ */
+const IMAGE_TYPES: Record<string, { ext: string; names: string[] }> = {
+  "image/jpeg": { ext: ".jpg", names: [".jpg", ".jpeg"] },
+  "image/png": { ext: ".png", names: [".png"] },
+  "image/webp": { ext: ".webp", names: [".webp"] },
+  "image/gif": { ext: ".gif", names: [".gif"] },
+};
+
+const VIDEO_TYPES: Record<string, { ext: string; names: string[] }> = {
+  "video/mp4": { ext: ".mp4", names: [".mp4"] },
+  "video/webm": { ext: ".webm", names: [".webm"] },
+  "video/quicktime": { ext: ".mov", names: [".mov"] },
+};
+
+const uniqueFileName = (ext: string) =>
+  `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+
+const createUploader = (
+  dir: string,
+  types: Record<string, { ext: string; names: string[] }>,
+  kind: string,
+  limits: multer.Options["limits"]
+) => {
+  fs.mkdirSync(dir, { recursive: true });
+
+  return multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, dir),
+      filename: (_req, file, cb) => cb(null, uniqueFileName(types[file.mimetype].ext)),
+    }),
+    limits,
+    fileFilter: (_req, file, cb) => {
+      const type = types[file.mimetype];
+      const originalExt = path.extname(file.originalname).toLowerCase();
+
+      if (!type || !type.names.includes(originalExt)) {
+        return cb(
+          new HttpError(
+            422,
+            `Only ${Object.values(types)
+              .flatMap((t) => t.names)
+              .join(", ")} ${kind} files are allowed.`
+          )
+        );
+      }
+
+      cb(null, true);
+    },
+  });
+};
+
+const productUploadDir = path.join(storageRoot, "products");
+const videoUploadDir = path.join(storageRoot, "videos");
+
+const uploadProductImages = createUploader(productUploadDir, IMAGE_TYPES, "image", {
+  fileSize: 5 * 1024 * 1024,
+  files: 10,
 });
 
-const uploadProductImages = multer({
-  storage: productStorage,
-  limits: {
-    fileSize: 5 * 1024 * 1024,
-    files: 10,
-  },
-  fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files are allowed."));
+const uploadVideoFile = createUploader(videoUploadDir, VIDEO_TYPES, "video", {
+  fileSize: 1024 * 1024 * 1024, // 1GB limit
+  files: 1,
+});
+
+/**
+ * Resolve a stored relative path (e.g. "products/abc.jpg") to an absolute
+ * path, or null when it would point outside the storage folder.
+ */
+const resolveStoragePath = (relativePath: string): string | null => {
+  const resolved = path.resolve(storageRoot, relativePath.replace(/^\/+/, "").replace(/^storage\//i, ""));
+  return resolved.startsWith(storageRoot + path.sep) ? resolved : null;
+};
+
+/** Best-effort removal of a locally stored file. URLs and paths outside storage are ignored. */
+const removeStoredFile = (storedPath: string | null | undefined) => {
+  if (typeof storedPath !== "string" || !storedPath.trim() || /^https?:\/\//i.test(storedPath)) {
+    return;
+  }
+
+  const absolutePath = resolveStoragePath(storedPath.trim());
+
+  if (absolutePath) {
+    fs.promises.unlink(absolutePath).catch(() => {
+      // Already gone or locked: nothing else to do.
+    });
+  }
+};
+
+/** Delete files multer saved for this request if the request ends in an error response. */
+const cleanupUploadsOnFailure = (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) => {
+  res.on("finish", () => {
+    if (res.statusCode < 400) return;
+
+    const files: Express.Multer.File[] = [];
+    if (req.file) files.push(req.file);
+    if (Array.isArray(req.files)) files.push(...req.files);
+
+    for (const file of files) {
+      fs.promises.unlink(file.path).catch(() => {});
+    }
+  });
+
+  next();
+};
+
+/** Simple fixed-window, in-memory rate limiter keyed by client IP. */
+const rateLimit = ({ windowMs, max, message }: { windowMs: number; max: number; message: string }) => {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (entry.resetAt <= now) hits.delete(key);
+    }
+  }, windowMs).unref();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const key = req.ip ?? "unknown";
+    const now = Date.now();
+    const entry = hits.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
     }
 
-    cb(null, true);
-  },
-});
+    entry.count += 1;
 
-const videoUploadDir = path.join(process.cwd(), "public", "storage", "videos");
-
-fs.mkdirSync(videoUploadDir, { recursive: true });
-
-const videoStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, videoUploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname).toLowerCase()}`;
-    cb(null, uniqueName);
-  },
-});
-
-const uploadVideoFile = multer({
-  storage: videoStorage,
-  limits: {
-    fileSize: 1024 * 1024 * 1024, // 1GB limit
-  },
-  fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith("video/")) {
-      return cb(new Error("Only video files are allowed."));
+    if (entry.count > max) {
+      res.setHeader("Retry-After", Math.ceil((entry.resetAt - now) / 1000).toString());
+      return res.status(429).json({ message });
     }
 
-    cb(null, true);
-  },
+    next();
+  };
+};
+
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many sign-in attempts. Please try again in a few minutes.",
 });
+
+const contactRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: "Too many messages sent. Please try again later.",
+});
+
+/** Input limits matching the VARCHAR(255) columns in the schema. */
+const MAX_SHORT_TEXT = 255;
+const MAX_LONG_TEXT = 5000;
+const MIN_PASSWORD_LENGTH = 8;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Returns the name of the first field whose trimmed string value exceeds its limit, if any. */
+const findTooLongField = (fields: Record<string, [unknown, number]>): string | null => {
+  for (const [name, [value, limit]] of Object.entries(fields)) {
+    if (typeof value === "string" && value.trim().length > limit) {
+      return name;
+    }
+  }
+
+  return null;
+};
+
+/** Checks address fields against the Address table's column sizes; returns an error message or null. */
+const validateAddressLengths = (fields: {
+  name?: unknown;
+  phone?: unknown;
+  addressLine?: unknown;
+  city?: unknown;
+  state?: unknown;
+  pinCode?: unknown;
+  landmark?: unknown;
+}): string | null => {
+  const tooLong = findTooLongField({
+    name: [fields.name, 255],
+    phone: [fields.phone, 20],
+    "address line": [fields.addressLine, 500],
+    city: [fields.city, 100],
+    state: [fields.state, 100],
+    "pin code": [fields.pinCode, 20],
+    landmark: [fields.landmark, 255],
+  });
+
+  return tooLong ? `The ${tooLong} is too long.` : null;
+};
+
+/** Shipping defaults used when the admin has not set them in store settings. */
+const DEFAULT_SHIPPING_FEE = 250;
+const DEFAULT_FREE_SHIPPING_THRESHOLD = 10000;
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -101,8 +256,43 @@ app.use(
     },
   })
 );
-app.use(cors());
-app.use(express.json());
+if (process.env.TRUST_PROXY) {
+  // Behind a reverse proxy, use X-Forwarded-For so rate limits see the real client IP.
+  app.set("trust proxy", process.env.TRUST_PROXY === "true" ? true : process.env.TRUST_PROXY);
+}
+
+/**
+ * CORS: only the origins listed in CORS_ORIGINS (comma-separated) may call the API.
+ * When it is unset, local development origins are allowed outside production.
+ */
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const isProduction = process.env.NODE_ENV === "production";
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Requests without an Origin header (curl, server-to-server, same-origin GETs).
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      if (
+        allowedOrigins.length === 0 &&
+        !isProduction &&
+        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+
+      callback(null, false);
+    },
+  })
+);
+app.use(express.json({ limit: "100kb" }));
 
 app.use(
   "/storage",
@@ -111,11 +301,13 @@ app.use(
 
 const PORT = process.env.PORT || 5000;
 
-const authenticateAdmin = (
+const authenticateAdmin = async (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) => {
+  let adminId: bigint;
+
   try {
     const authHeader = req.headers.authorization;
 
@@ -145,14 +337,32 @@ const authenticateAdmin = (
       });
     }
 
-    res.locals.adminId = BigInt(decoded.id);
-
-    next();
+    adminId = BigInt(decoded.id);
   } catch {
     return res.status(401).json({
       message: "Invalid or expired administrator token.",
     });
   }
+
+  // Re-check the database so revoked admin rights take effect immediately,
+  // not only when the 12-hour token expires.
+  try {
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId },
+      select: { isAdmin: true },
+    });
+
+    if (!admin || !admin.isAdmin) {
+      return res.status(403).json({
+        message: "Administrator access denied.",
+      });
+    }
+  } catch (error) {
+    return next(error);
+  }
+
+  res.locals.adminId = adminId;
+  next();
 };
 
 const authenticateCustomer = (
@@ -222,7 +432,7 @@ app.get("/api/health", async (req, res) => {
 });
 
 
-app.post("/api/admin/login", async (req, res) => {
+app.post("/api/admin/login", authRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -289,7 +499,7 @@ app.post("/api/admin/login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", authRateLimit, async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
@@ -307,6 +517,36 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(422).json({
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(422).json({
+        message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+      });
+    }
+
+    // bcrypt only uses the first 72 bytes; reject longer passwords rather than silently truncating.
+    if (Buffer.byteLength(password, "utf8") > 72) {
+      return res.status(422).json({
+        message: "Password must be at most 72 characters.",
+      });
+    }
+
+    const tooLong = findTooLongField({
+      name: [name, MAX_SHORT_TEXT],
+      email: [email, MAX_SHORT_TEXT],
+    });
+
+    if (tooLong) {
+      return res.status(422).json({
+        message: `The ${tooLong} must be at most ${MAX_SHORT_TEXT} characters.`,
+      });
+    }
 
     const existingUser = await prisma.user.findFirst({
       where: {
@@ -360,6 +600,13 @@ app.post("/api/auth/register", async (req, res) => {
       },
     });
   } catch (error) {
+    // Two sign-ups with the same email at once: the unique index rejects the second.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({
+        message: "An account with this email already exists.",
+      });
+    }
+
     console.error("Customer register API error:", error);
 
     return res.status(500).json({
@@ -368,7 +615,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -477,6 +724,27 @@ app.put("/api/customer/user", authenticateCustomer, async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(422).json({
+        errors: {
+          email: ["Please enter a valid email address."],
+        },
+      });
+    }
+
+    const tooLong = findTooLongField({
+      name: [name, MAX_SHORT_TEXT],
+      email: [email, MAX_SHORT_TEXT],
+    });
+
+    if (tooLong) {
+      return res.status(422).json({
+        errors: {
+          [tooLong]: [`The ${tooLong} must be at most ${MAX_SHORT_TEXT} characters.`],
+        },
+      });
+    }
 
     const existingUser = await prisma.user.findFirst({
       where: {
@@ -693,7 +961,7 @@ app.get("/api/admin/videos", authenticateAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/contact", async (req, res) => {
+app.post("/api/contact", contactRateLimit, async (req, res) => {
   try {
     const { name, email, mobile, message } = req.body;
 
@@ -718,6 +986,25 @@ app.post("/api/contact", async (req, res) => {
     if (typeof message !== "string" || !message.trim()) {
       return res.status(422).json({
         message: "Message is required.",
+      });
+    }
+
+    if (!EMAIL_PATTERN.test(email.trim())) {
+      return res.status(422).json({
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    const tooLong = findTooLongField({
+      name: [name, MAX_SHORT_TEXT],
+      email: [email, MAX_SHORT_TEXT],
+      mobile: [mobile, 16],
+      message: [message, MAX_LONG_TEXT],
+    });
+
+    if (tooLong) {
+      return res.status(422).json({
+        message: `The ${tooLong} is too long.`,
       });
     }
 
@@ -1105,6 +1392,63 @@ const formatStoreSettingsResponse = (settings: {
   updated_at: settings.updatedAt,
 });
 
+/**
+ * Shipping charged on an order subtotal. Uses the admin's store settings, falling
+ * back to the defaults when a value is not set. Free when subtotal exceeds the threshold.
+ */
+const calculateShipping = (
+  subtotal: Prisma.Decimal,
+  settings: { shippingFee: Prisma.Decimal | null; freeShippingThreshold: Prisma.Decimal | null } | null
+): Prisma.Decimal => {
+  const fee = settings?.shippingFee ?? new Prisma.Decimal(DEFAULT_SHIPPING_FEE);
+  const threshold = settings?.freeShippingThreshold ?? new Prisma.Decimal(DEFAULT_FREE_SHIPPING_THRESHOLD);
+
+  return subtotal.greaterThan(threshold) ? new Prisma.Decimal(0) : fee;
+};
+
+// Public, read-only store settings for the storefront (name, contact details, policies, shipping).
+app.get("/api/settings", async (_req, res) => {
+  try {
+    const settings = await prisma.storeSetting.findFirst();
+
+    if (!settings) {
+      return res.json({
+        store_name: "",
+        store_email: "",
+        store_phone: "",
+        store_address: "",
+        shipping_fee: DEFAULT_SHIPPING_FEE,
+        free_shipping_threshold: DEFAULT_FREE_SHIPPING_THRESHOLD,
+        return_policy: "",
+        shipping_policy: "",
+        privacy_policy: "",
+        terms_policy: "",
+      });
+    }
+
+    const formatted = formatStoreSettingsResponse(settings);
+
+    return res.json({
+      store_name: formatted.store_name,
+      store_email: formatted.store_email,
+      store_phone: formatted.store_phone,
+      store_address: formatted.store_address,
+      shipping_fee: formatted.shipping_fee ?? DEFAULT_SHIPPING_FEE,
+      free_shipping_threshold: formatted.free_shipping_threshold ?? DEFAULT_FREE_SHIPPING_THRESHOLD,
+      return_policy: formatted.return_policy,
+      shipping_policy: formatted.shipping_policy,
+      privacy_policy: formatted.privacy_policy,
+      terms_policy: formatted.terms_policy,
+    });
+  } catch (error) {
+    console.error("Public store settings API error:", error);
+
+    return res.status(500).json({
+      message: "Unable to load store settings.",
+    });
+  }
+});
+
 app.get("/api/admin/store-settings", authenticateAdmin, async (req, res) => {
   try {
     const settings = await prisma.storeSetting.findFirst();
@@ -1165,6 +1509,12 @@ app.put("/api/admin/store-settings", authenticateAdmin, async (req, res) => {
       }
 
       const trimmed = value.trim();
+      const maxLength = key === "store_phone" ? 50 : key === "store_name" || key === "store_email" ? MAX_SHORT_TEXT : null;
+
+      if (maxLength !== null && trimmed.length > maxLength) {
+        throw new Error(`${key} must be at most ${maxLength} characters.`);
+      }
+
       updateData[key] = trimmed || null;
     };
 
@@ -1510,6 +1860,7 @@ app.post("/api/admin/offers", authenticateAdmin, async (req, res) => {
 app.post(
   "/api/admin/videos",
   authenticateAdmin,
+  cleanupUploadsOnFailure,
   (req, res, next) => {
     uploadVideoFile.single("video")(req, res, (err) => {
       if (err) {
@@ -1518,8 +1869,11 @@ app.post(
             message: "The video file is too large for the server. Maximum supported size is 1GB.",
           });
         }
+        if (err instanceof HttpError) {
+          return res.status(err.status).json({ message: err.message });
+        }
         return res.status(422).json({
-          message: err.message || "Failed to upload video.",
+          message: "Failed to upload video.",
         });
       }
       next();
@@ -1807,26 +2161,15 @@ app.delete("/api/admin/videos/:id", authenticateAdmin, async (req, res) => {
       });
     }
 
-    if (typeof video.video === "string" && !/^https?:\/\//i.test(video.video)) {
-      const storagePath = path.join(process.cwd(), "public", "storage", video.video.replace(/^\/+/, ""));
-      if (fs.existsSync(storagePath)) {
-        const allowedPrefix = path.join(process.cwd(), "public", "storage");
-        const normalizedStoragePath = path.resolve(storagePath);
-        const normalizedAllowedPrefix = path.resolve(allowedPrefix);
-
-        if (normalizedStoragePath.startsWith(normalizedAllowedPrefix)) {
-          try {
-            fs.unlinkSync(normalizedStoragePath);
-          } catch {
-            // Ignore file deletion errors; the DB record is still removed safely.
-          }
-        }
-      }
-    }
-
     await prisma.video.delete({
       where: { id: videoId },
     });
+
+    // Remove the files only after the record is gone. resolveStoragePath keeps
+    // deletion inside public/storage (with a separator check, so sibling folders
+    // such as public/storage2 are not reachable).
+    removeStoredFile(video.video);
+    removeStoredFile(video.poster);
 
     return res.json({
       message: "Video deleted successfully.",
@@ -1843,6 +2186,7 @@ app.delete("/api/admin/videos/:id", authenticateAdmin, async (req, res) => {
 app.post(
   "/api/admin/products",
   authenticateAdmin,
+  cleanupUploadsOnFailure,
   uploadProductImages.array("images[]", 10),
   async (req, res) => {
   try {
@@ -2031,6 +2375,7 @@ app.post(
 app.put(
   "/api/admin/products/:id",
   authenticateAdmin,
+  cleanupUploadsOnFailure,
   uploadProductImages.array("images[]", 10),
   async (req, res) => {
   try {
@@ -2196,7 +2541,21 @@ app.put(
     };
 
     const updatedProduct = await prisma.$transaction(async (tx) => {
-            if (images !== undefined) {
+      if (uploadedImagePaths.length > 0) {
+        // New photos replace the gallery so it matches the new main image.
+        await tx.productImage.deleteMany({
+          where: {
+            productId,
+          },
+        });
+
+        await tx.productImage.createMany({
+          data: uploadedImagePaths.map((image) => ({
+            productId,
+            image,
+          })),
+        });
+      } else if (images !== undefined) {
         await tx.productImage.deleteMany({
           where: {
             productId,
@@ -2223,6 +2582,22 @@ app.put(
         },
       });
     });
+
+    // Delete image files the product no longer references (old gallery and main image).
+    const stillUsed = new Set([
+      updatedProduct.image,
+      ...updatedProduct.images.map((img) => img.image),
+    ]);
+    const previouslyUsed = new Set([
+      existingProduct.image,
+      ...existingProduct.images.map((img) => img.image),
+    ]);
+
+    for (const oldPath of previouslyUsed) {
+      if (oldPath && !stillUsed.has(oldPath)) {
+        removeStoredFile(oldPath);
+      }
+    }
 
     return res.json(formatProductResponse(updatedProduct));
   } catch (error) {
@@ -2319,6 +2694,7 @@ app.delete("/api/admin/products/:id", authenticateAdmin, async (req, res) => {
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
+      include: { images: true },
     });
 
     if (!product) {
@@ -2335,23 +2711,19 @@ app.delete("/api/admin/products/:id", authenticateAdmin, async (req, res) => {
 
     if (relatedOrderItem) {
       return res.status(409).json({
-        message: "This product is referenced by an order and cannot be deleted.",
-      });
-    }
-
-    const relatedWishlist = await prisma.wishlist.findFirst({
-      where: {
-        productId,
-      },
-    });
-
-    if (relatedWishlist) {
-      return res.status(409).json({
-        message: "This product is currently in a wishlist and cannot be deleted.",
+        message: "This product is referenced by an order and cannot be deleted. Hide it instead by marking it inactive.",
       });
     }
 
     await prisma.$transaction(async (tx) => {
+      // Wishlist entries are removed with the product, so a customer's wishlist
+      // can no longer block the admin from deleting it.
+      await tx.wishlist.deleteMany({
+        where: {
+          productId,
+        },
+      });
+
       await tx.productImage.deleteMany({
         where: {
           productId,
@@ -2362,6 +2734,11 @@ app.delete("/api/admin/products/:id", authenticateAdmin, async (req, res) => {
         where: { id: productId },
       });
     });
+
+    removeStoredFile(product.image);
+    for (const img of product.images) {
+      removeStoredFile(img.image);
+    }
 
     return res.json({
       message: "Product deleted successfully.",
@@ -2447,6 +2824,14 @@ app.post("/api/addresses", authenticateCustomer, async (req, res) => {
     if (typeof isDefault !== "undefined" && typeof isDefault !== "boolean") {
       return res.status(422).json({
         message: "isDefault must be a boolean.",
+      });
+    }
+
+    const addressLengthError = validateAddressLengths({ name, phone, addressLine, city, state, pinCode, landmark });
+
+    if (addressLengthError) {
+      return res.status(422).json({
+        message: addressLengthError,
       });
     }
 
@@ -2610,6 +2995,14 @@ app.put("/api/addresses/:id", authenticateCustomer, async (req, res) => {
     ) {
       return res.status(422).json({
         message: "isDefault must be a boolean.",
+      });
+    }
+
+    const addressLengthError = validateAddressLengths({ name, phone, addressLine, city, state, pinCode, landmark });
+
+    if (addressLengthError) {
+      return res.status(422).json({
+        message: addressLengthError,
       });
     }
 
@@ -3442,6 +3835,13 @@ app.get("/api/orders", authenticateAdmin, async (req, res) => {
   }
 });
 
+class InsufficientStockError extends Error {
+  constructor(public readonly productName: string) {
+    super(`Insufficient stock for product ${productName}.`);
+    this.name = "InsufficientStockError";
+  }
+}
+
 app.post("/api/orders", authenticateCustomer, async (req, res) => {
   try {
     const customerId = res.locals.customerId as bigint;
@@ -3452,22 +3852,46 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       ? String(rawAddressId)
       : null;
 
-    let selectedAddress: any = null;
+    // The delivery details copied onto the order. Either a saved address the
+    // customer owns (address_id), or details typed at checkout. Typed details are
+    // used for this order only and are NOT saved to the address book here: the
+    // checkout saves them separately when the customer ticks "save to account".
+    let selectedAddress: {
+      name: string;
+      phone: string;
+      addressLine: string;
+      city: string;
+      state: string;
+      pinCode: string;
+      landmark: string | null;
+    } | null = null;
 
-    if (normalizedAddressId && /^\d+$/.test(normalizedAddressId)) {
-      selectedAddress = await prisma.address.findUnique({
+    if (normalizedAddressId !== null) {
+      if (!/^\d+$/.test(normalizedAddressId)) {
+        return res.status(400).json({
+          message: "Invalid address ID.",
+        });
+      }
+
+      const savedAddress = await prisma.address.findUnique({
         where: { id: BigInt(normalizedAddressId) },
       });
 
-      if (selectedAddress && selectedAddress.userId !== customerId) {
+      if (!savedAddress) {
+        return res.status(404).json({
+          message: "Address not found.",
+        });
+      }
+
+      if (savedAddress.userId !== customerId) {
         return res.status(403).json({
           message: "You are not allowed to create an order for this address.",
         });
       }
-    }
 
-    if (!selectedAddress) {
-      const addressLineVal = req.body.addressLine ?? req.body.address_line ?? req.body.customer_address;
+      selectedAddress = savedAddress;
+    } else {
+      const addressLineVal = req.body.addressLine ?? req.body.address_line;
       const cityVal = req.body.city;
       const stateVal = req.body.state;
       const pinCodeVal = req.body.pinCode ?? req.body.pin_code;
@@ -3475,25 +3899,45 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       const phoneVal = req.body.phone ?? req.body.customer_phone;
       const landmarkVal = req.body.landmark;
 
-      if (addressLineVal && cityVal && stateVal && pinCodeVal && nameVal && phoneVal) {
-        selectedAddress = await prisma.address.create({
-          data: {
-            userId: customerId,
-            name: String(nameVal).trim(),
-            phone: String(phoneVal).trim(),
-            addressLine: String(addressLineVal).trim(),
-            city: String(cityVal).trim(),
-            state: String(stateVal).trim(),
-            pinCode: String(pinCodeVal).trim(),
-            landmark: landmarkVal ? String(landmarkVal).trim() : null,
-            isDefault: false,
-          },
-        });
-      } else {
-        return res.status(400).json({
-          message: "Invalid address ID or incomplete address details.",
+      const requiredValues = [addressLineVal, cityVal, stateVal, pinCodeVal, nameVal, phoneVal];
+
+      if (!requiredValues.every((value) => typeof value === "string" && value.trim())) {
+        return res.status(422).json({
+          message: "Name, phone, address line, city, state, and pin code are required.",
         });
       }
+
+      if (landmarkVal !== undefined && landmarkVal !== null && typeof landmarkVal !== "string") {
+        return res.status(422).json({
+          message: "Landmark must be a string or null.",
+        });
+      }
+
+      const addressLengthError = validateAddressLengths({
+        name: nameVal,
+        phone: phoneVal,
+        addressLine: addressLineVal,
+        city: cityVal,
+        state: stateVal,
+        pinCode: pinCodeVal,
+        landmark: landmarkVal,
+      });
+
+      if (addressLengthError) {
+        return res.status(422).json({
+          message: addressLengthError,
+        });
+      }
+
+      selectedAddress = {
+        name: nameVal.trim(),
+        phone: phoneVal.trim(),
+        addressLine: addressLineVal.trim(),
+        city: cityVal.trim(),
+        state: stateVal.trim(),
+        pinCode: pinCodeVal.trim(),
+        landmark: typeof landmarkVal === "string" && landmarkVal.trim() ? landmarkVal.trim() : null,
+      };
     }
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -3587,7 +4031,16 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       });
     }
 
-    const orderNumber = `ORD-${Date.now()}-${customerId.toString().slice(-6)}`;
+    // Shipping comes from the admin's store settings, so the saved total matches what checkout shows.
+    const storeSettings = await prisma.storeSetting.findFirst({
+      select: { shippingFee: true, freeShippingThreshold: true },
+    });
+    const subtotalAmount = totalAmount;
+    const shippingAmount = calculateShipping(subtotalAmount, storeSettings);
+    totalAmount = subtotalAmount.add(shippingAmount);
+
+    // Random suffix so two orders in the same millisecond cannot share a number.
+    const orderNumber = `ORD-${Date.now()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const customerAddressText = [
       selectedAddress.addressLine,
       selectedAddress.city,
@@ -3600,14 +4053,28 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
 
     const createdOrder = await prisma.$transaction(async (tx) => {
       for (const [productId, quantity] of quantitiesByProduct.entries()) {
-        await tx.product.update({
-          where: { id: productId },
+        // Conditional decrement: the row is only updated if enough stock is
+        // still available at write time. This closes the race where two
+        // concurrent orders both pass the earlier stock check and oversell.
+        const { count } = await tx.product.updateMany({
+          where: {
+            id: productId,
+            isActive: true,
+            stock: {
+              gte: quantity,
+            },
+          },
           data: {
             stock: {
               decrement: quantity,
             },
           },
         });
+
+        if (count === 0) {
+          // Throwing rolls back every decrement already made in this transaction.
+          throw new InsufficientStockError(productMap.get(productId)?.name ?? productId.toString());
+        }
       }
 
       const order = await tx.order.create({
@@ -3660,6 +4127,8 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       customer_name: createdOrder.customerName,
       customer_phone: createdOrder.customerPhone,
       customer_address: createdOrder.customerAddress,
+      subtotal_amount: subtotalAmount.toFixed(2),
+      shipping_amount: shippingAmount.toFixed(2),
       total_amount: createdOrder.totalAmount.toString(),
       amount: createdOrder.totalAmount.toString(),
       status: createdOrder.status,
@@ -3686,6 +4155,12 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       })),
     });
   } catch (error) {
+    if (error instanceof InsufficientStockError) {
+      return res.status(422).json({
+        message: `Insufficient stock for product ${error.productName}.`,
+      });
+    }
+
     console.error("Create checkout order API error:", error);
 
     return res.status(500).json({
@@ -3743,11 +4218,42 @@ const orderId = BigInt(rawOrderId);
       });
     }
 
+    // A cancelled order has already returned its stock. Re-opening it would need
+    // that stock reserved again, so it is not allowed; place a new order instead.
+    if (existingOrder.status === "Cancelled" && status !== "Cancelled") {
+      return res.status(422).json({
+        message: "A cancelled order cannot be reopened.",
+      });
+    }
+
     const updatedOrder = await prisma.$transaction(async (tx) => {
-  await tx.order.update({
-    where: { id: orderId },
-    data: { status },
-  });
+  if (status === "Cancelled") {
+    // Only the request that actually moves the order into Cancelled restocks,
+    // so two cancels arriving together cannot return the stock twice.
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, status: { not: "Cancelled" } },
+      data: { status },
+    });
+
+    if (count === 1) {
+      const items = await tx.orderItem.findMany({
+        where: { orderId },
+        select: { productId: true, quantity: true },
+      });
+
+      for (const item of items) {
+        await tx.product.updateMany({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+    }
+  } else {
+    await tx.order.update({
+      where: { id: orderId },
+      data: { status },
+    });
+  }
 
   if (existingOrder.status !== status) {
     await tx.orderStatusHistory.create({
@@ -3811,6 +4317,62 @@ const orderId = BigInt(rawOrderId);
 }
 });
 
+
+// Unknown routes get a JSON 404 instead of Express's HTML page.
+app.use((_req: express.Request, res: express.Response) => {
+  res.status(404).json({
+    message: "Not found.",
+  });
+});
+
+// Final error handler: never send stack traces to the client. Catches upload
+// errors, malformed JSON bodies and anything else passed to next(error).
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    // Express recognises error handlers by their four arguments.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _next: express.NextFunction
+  ) => {
+    if (res.headersSent) {
+      return;
+    }
+
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ message: err.message });
+    }
+
+    if (err instanceof multer.MulterError) {
+      const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 422;
+      const message =
+        err.code === "LIMIT_FILE_SIZE"
+          ? "The uploaded file is too large."
+          : err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE"
+          ? "Too many files, or an unexpected file field."
+          : "The upload could not be processed.";
+
+      return res.status(status).json({ message });
+    }
+
+    const typed = err as { type?: string; status?: number };
+
+    if (typed?.type === "entity.parse.failed") {
+      return res.status(400).json({ message: "The request body is not valid JSON." });
+    }
+
+    if (typed?.type === "entity.too.large") {
+      return res.status(413).json({ message: "The request body is too large." });
+    }
+
+    console.error("Unhandled API error:", err);
+
+    return res.status(500).json({
+      message: "Something went wrong.",
+    });
+  }
+);
 
 app.listen(PORT, () => {
   console.log(`Yaale backend running on port ${PORT}`);
