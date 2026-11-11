@@ -11,6 +11,23 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import crypto from "crypto";
+import {
+  frontendUrl,
+  isMailConfigured,
+  sendOrderPlacedEmail,
+  sendOrderStatusEmail,
+  sendPasswordResetEmail,
+  type OrderEmailData,
+} from "./mailer.js";
+import {
+  createRazorpayOrder,
+  isRazorpayConfigured,
+  isWebhookConfigured,
+  razorpayKeyId,
+  refundRazorpayPayment,
+  verifyCheckoutSignature,
+  verifyWebhookSignature,
+} from "./razorpay.js";
 
 
 dotenv.config();
@@ -283,10 +300,12 @@ app.use(
 
       if (allowedOrigins.includes(origin)) return callback(null, true);
 
+      // Development only: this computer, plus private Wi-Fi/LAN addresses
+      // (10.x, 172.16–31.x, 192.168.x) so phones on the same network can test.
       if (
         allowedOrigins.length === 0 &&
         !isProduction &&
-        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)
+        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin)
       ) {
         return callback(null, true);
       }
@@ -295,6 +314,245 @@ app.use(
     },
   })
 );
+// ── Order helpers shared by checkout, payments, cancellation and admin ─────────
+
+type TxClient = Prisma.TransactionClient;
+
+/** Statuses a customer may still cancel from (before the order is packed/shipped). */
+const CUSTOMER_CANCELLABLE_STATUSES = ["Pending", "Confirmed"];
+
+/** Unpaid online orders are cancelled after this long so their stock is released. */
+const UNPAID_ORDER_TIMEOUT_MINUTES = 30;
+
+/**
+ * Move an order to Cancelled and return its stock — once. Returns false when it
+ * was already cancelled (e.g. two cancels at the same time), so stock is never
+ * returned twice.
+ */
+const cancelOrderAndRestock = async (
+  tx: TxClient,
+  orderId: bigint,
+  changedBy: bigint | null,
+  note: string
+): Promise<boolean> => {
+  const { count } = await tx.order.updateMany({
+    where: { id: orderId, status: { not: "Cancelled" } },
+    data: { status: "Cancelled" },
+  });
+
+  if (count !== 1) return false;
+
+  const items = await tx.orderItem.findMany({
+    where: { orderId },
+    select: { productId: true, quantity: true },
+  });
+
+  for (const item of items) {
+    await tx.product.updateMany({
+      where: { id: item.productId },
+      data: { stock: { increment: item.quantity } },
+    });
+  }
+
+  await tx.orderStatusHistory.create({
+    data: { orderId, changedBy, status: "Cancelled", note },
+  });
+
+  return true;
+};
+
+type OrderWithDetails = Prisma.OrderGetPayload<{ include: { items: true; statusHistory: true } }>;
+
+/** Price breakdown fields shared by every order response. */
+const orderMoneyFields = (order: Prisma.OrderGetPayload<object>) => ({
+  subtotal_amount: order.subtotalAmount?.toString() ?? null,
+  shipping_amount: order.shippingAmount?.toString() ?? null,
+  discount_amount: order.discountAmount?.toString() ?? null,
+  coupon_code: order.couponCode,
+});
+
+/** Full order as the API returns it (customer, tracking and admin views). */
+const formatOrder = (order: OrderWithDetails) => ({
+  id: order.id.toString(),
+  order_number: order.orderNumber,
+  customer_name: order.customerName,
+  customer_phone: order.customerPhone,
+  customer_address: order.customerAddress,
+  ...orderMoneyFields(order),
+  total_amount: order.totalAmount.toString(),
+  amount: order.totalAmount.toString(),
+  status: order.status,
+  payment_status: order.paymentStatus,
+  expected_delivery_date: order.expectedDeliveryDate,
+  created_at: order.createdAt,
+  updated_at: order.updatedAt,
+  can_cancel: CUSTOMER_CANCELLABLE_STATUSES.includes(order.status),
+  items: order.items.map((item) => ({
+    id: item.id.toString(),
+    order_id: item.orderId.toString(),
+    product_id: item.productId.toString(),
+    product_name: item.productName,
+    quantity: item.quantity,
+    price: item.price.toString(),
+  })),
+  status_history: [...order.statusHistory]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map((history) => ({
+      id: history.id.toString(),
+      order_id: history.orderId.toString(),
+      changed_by: history.changedBy?.toString() ?? null,
+      status: history.status,
+      note: history.note,
+      created_at: history.createdAt,
+      updated_at: history.updatedAt,
+    })),
+});
+
+const orderDetailsInclude = {
+  items: true,
+  statusHistory: { orderBy: { createdAt: "desc" as const } },
+};
+
+/** Refund a cancelled order that was paid through Razorpay, and record it. */
+const refundIfPaidOnline = async (orderId: bigint) => {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+  if (!order || order.paymentStatus !== "Paid" || !order.razorpayPaymentId) return;
+
+  try {
+    await refundRazorpayPayment(order.razorpayPaymentId, Math.round(order.totalAmount.toNumber() * 100));
+    await prisma.order.update({ where: { id: orderId }, data: { paymentStatus: "Refunded" } });
+  } catch (error) {
+    // The order stays cancelled and Paid, which shows the admin a refund is still owed.
+    console.error(`Refund for order ${order.orderNumber} failed:`, error);
+  }
+};
+
+/** Data for order emails, plus the customer's email address. */
+const loadOrderForEmail = async (orderId: bigint): Promise<{ to: string; data: OrderEmailData } | null> => {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { items: true, user: { select: { email: true } } },
+  });
+
+  if (!order?.user?.email) return null;
+
+  return {
+    to: order.user.email,
+    data: {
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      totalAmount: order.totalAmount.toString(),
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      items: order.items.map((item) => ({
+        productName: item.productName,
+        quantity: item.quantity,
+        price: item.price.toString(),
+      })),
+    },
+  };
+};
+
+const emailOrderPlaced = async (orderId: bigint) => {
+  const loaded = await loadOrderForEmail(orderId).catch(() => null);
+  if (loaded) await sendOrderPlacedEmail(loaded.to, loaded.data);
+};
+
+const emailOrderStatus = async (orderId: bigint, note: string | null) => {
+  const loaded = await loadOrderForEmail(orderId).catch(() => null);
+  if (loaded) await sendOrderStatusEmail(loaded.to, loaded.data, note);
+};
+
+/**
+ * Record a successful Razorpay payment. Idempotent: the checkout callback and
+ * the webhook may both report the same payment. Returns the order id when this
+ * call is the one that marked it paid.
+ */
+const markRazorpayOrderPaid = async (razorpayOrderId: string, razorpayPaymentId: string): Promise<bigint | null> => {
+  const order = await prisma.order.findUnique({ where: { razorpayOrderId } });
+  if (!order) return null;
+
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, paymentStatus: { not: "Paid" } },
+    data: { paymentStatus: "Paid", razorpayPaymentId },
+  });
+
+  if (count !== 1) return null;
+
+  // Paid after the unpaid-order timeout already cancelled it: refund rather than
+  // keep money for an order whose stock was released.
+  if (order.status === "Cancelled") {
+    await refundRazorpayPayment(razorpayPaymentId, Math.round(order.totalAmount.toNumber() * 100))
+      .then(() => prisma.order.update({ where: { id: order.id }, data: { paymentStatus: "Refunded" } }))
+      .catch((error) => console.error("Refund of payment for cancelled order failed:", error));
+    return null;
+  }
+
+  return order.id;
+};
+
+/**
+ * Create a Razorpay order for one of our orders and remember its id. Returns
+ * what the storefront needs to open the Razorpay Checkout popup.
+ */
+const startRazorpayPayment = async (orderId: bigint, orderNumber: string, totalAmount: Prisma.Decimal) => {
+  const amountPaise = Math.round(totalAmount.toNumber() * 100);
+
+  if (amountPaise < 100) {
+    throw new Error(`Razorpay needs at least 100 paise; order ${orderNumber} totals ${amountPaise}.`);
+  }
+
+  const razorpayOrder = await createRazorpayOrder(amountPaise, orderNumber, { order_number: orderNumber });
+
+  await prisma.order.update({
+    where: { id: orderId },
+    data: { razorpayOrderId: razorpayOrder.id },
+  });
+
+  return {
+    provider: "razorpay",
+    key_id: razorpayKeyId,
+    razorpay_order_id: razorpayOrder.id,
+    amount: razorpayOrder.amount,
+    currency: razorpayOrder.currency,
+  };
+};
+
+// Razorpay webhook. Registered before express.json() because the signature is
+// computed over the exact raw body.
+app.post(
+  "/api/payments/razorpay/webhook",
+  express.raw({ type: "application/json", limit: "100kb" }),
+  async (req, res) => {
+    if (!isWebhookConfigured) {
+      return res.status(503).json({ message: "Webhook is not configured." });
+    }
+
+    const signature = req.get("X-Razorpay-Signature") ?? "";
+
+    if (!Buffer.isBuffer(req.body) || !verifyWebhookSignature(req.body, signature)) {
+      return res.status(400).json({ message: "Invalid signature." });
+    }
+
+    try {
+      const event = JSON.parse(req.body.toString("utf8"));
+      const payment = event?.payload?.payment?.entity;
+
+      if (event?.event === "payment.captured" && payment?.order_id && payment?.id) {
+        const paidOrderId = await markRazorpayOrderPaid(String(payment.order_id), String(payment.id));
+        if (paidOrderId) void emailOrderPlaced(paidOrderId);
+      }
+
+      // Always 200 for a verified event, so Razorpay does not keep retrying.
+      return res.json({ received: true });
+    } catch (error) {
+      console.error("Razorpay webhook error:", error);
+      return res.status(500).json({ message: "Webhook processing failed." });
+    }
+  }
+);
+
 app.use(express.json({ limit: "100kb" }));
 
 app.use(
@@ -684,6 +942,164 @@ app.post("/api/auth/login", authRateLimit, async (req, res) => {
   }
 });
 
+// ── Passwords ──────────────────────────────────────────────────────────────────
+
+const RESET_TOKEN_MINUTES = 60;
+const hashResetToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+
+/** Shared checks for a new password; returns an error message or null. */
+const validateNewPassword = (password: unknown): string | null => {
+  if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+
+  if (Buffer.byteLength(password, "utf8") > 72) {
+    return "Password must be at most 72 characters.";
+  }
+
+  return null;
+};
+
+const passwordResetRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: "Too many password reset requests. Please try again in a few minutes.",
+});
+
+// Always answers the same way, whether or not the email has an account, so the
+// form cannot be used to find out who is a customer.
+app.post("/api/auth/forgot-password", passwordResetRateLimit, async (req, res) => {
+  const genericReply = {
+    message: "If an account exists for that email, a reset link has been sent.",
+  };
+
+  try {
+    const { email } = req.body;
+
+    if (typeof email !== "string" || !EMAIL_PATTERN.test(email.trim().toLowerCase())) {
+      return res.status(422).json({ message: "Please enter a valid email address." });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" }, isAdmin: false },
+    });
+
+    if (!user) {
+      return res.json(genericReply);
+    }
+
+    if (!isMailConfigured) {
+      console.warn("Password reset requested but SMTP is not configured; no email sent.");
+      return res.json(genericReply);
+    }
+
+    const token = crypto.randomBytes(32).toString("hex");
+
+    // One active token per email; a new request replaces the old one.
+    await prisma.passwordResetToken.upsert({
+      where: { email: user.email },
+      create: { email: user.email, token: hashResetToken(token), createdAt: new Date() },
+      update: { token: hashResetToken(token), createdAt: new Date() },
+    });
+
+    const resetUrl = `${frontendUrl}/#reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
+    void sendPasswordResetEmail(user.email, user.name, resetUrl);
+
+    return res.json(genericReply);
+  } catch (error) {
+    console.error("Forgot password API error:", error);
+    return res.status(500).json({ message: "Unable to process the request." });
+  }
+});
+
+app.post("/api/auth/reset-password", passwordResetRateLimit, async (req, res) => {
+  try {
+    const { email, token, password } = req.body;
+
+    if (typeof email !== "string" || typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) {
+      return res.status(422).json({ message: "This reset link is invalid. Please request a new one." });
+    }
+
+    const passwordError = validateNewPassword(password);
+    if (passwordError) {
+      return res.status(422).json({ message: passwordError });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const record = await prisma.passwordResetToken.findUnique({ where: { email: normalizedEmail } });
+    const expired =
+      !record?.createdAt || Date.now() - record.createdAt.getTime() > RESET_TOKEN_MINUTES * 60 * 1000;
+
+    if (
+      !record ||
+      expired ||
+      !crypto.timingSafeEqual(Buffer.from(record.token), Buffer.from(hashResetToken(token)))
+    ) {
+      return res.status(422).json({ message: "This reset link is invalid or has expired. Please request a new one." });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" }, isAdmin: false },
+    });
+
+    if (!user) {
+      return res.status(422).json({ message: "This reset link is invalid. Please request a new one." });
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { password: await bcrypt.hash(password, 10) },
+      }),
+      // Each link works once.
+      prisma.passwordResetToken.delete({ where: { email: normalizedEmail } }),
+    ]);
+
+    return res.json({ message: "Your password has been reset. You can now sign in." });
+  } catch (error) {
+    console.error("Reset password API error:", error);
+    return res.status(500).json({ message: "Unable to reset the password." });
+  }
+});
+
+app.put("/api/customer/password", authenticateCustomer, authRateLimit, async (req, res) => {
+  try {
+    const customerId = res.locals.customerId as bigint;
+    const currentPassword = req.body.currentPassword ?? req.body.current_password;
+    const newPassword = req.body.password;
+
+    if (typeof currentPassword !== "string" || !currentPassword) {
+      return res.status(422).json({ message: "Please enter your current password." });
+    }
+
+    const passwordError = validateNewPassword(newPassword);
+    if (passwordError) {
+      return res.status(422).json({ message: passwordError });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: customerId } });
+
+    if (!user || !(await bcrypt.compare(currentPassword, user.password))) {
+      return res.status(422).json({ message: "Your current password is incorrect." });
+    }
+
+    if (await bcrypt.compare(newPassword, user.password)) {
+      return res.status(422).json({ message: "The new password must be different from the current one." });
+    }
+
+    await prisma.user.update({
+      where: { id: customerId },
+      data: { password: await bcrypt.hash(newPassword, 10) },
+    });
+
+    return res.json({ message: "Your password has been changed." });
+  } catch (error) {
+    console.error("Change password API error:", error);
+    return res.status(500).json({ message: "Unable to change the password." });
+  }
+});
+
 app.get("/api/customer/user", authenticateCustomer, async (req, res) => {
   try {
     const customerId = res.locals.customerId as bigint;
@@ -907,6 +1323,133 @@ app.get("/api/admin/categories", authenticateAdmin, async (req, res) => {
   }
 });
 
+// ── Offers and coupon codes ────────────────────────────────────────────────────
+
+type OfferRecord = Prisma.OfferGetPayload<object>;
+
+const formatOffer = (offer: OfferRecord) => ({
+  id: offer.id.toString(),
+  title: offer.title,
+  type: offer.type,
+  value: offer.value,
+  description: offer.description,
+  status: offer.status,
+  code: offer.code,
+  discount_type: offer.discountType,
+  discount_value: offer.discountValue?.toString() ?? null,
+  min_order_amount: offer.minOrderAmount?.toString() ?? null,
+  created_at: offer.createdAt,
+  updated_at: offer.updatedAt,
+});
+
+/**
+ * Reads the coupon fields of an offer form. A code needs a discount type
+ * ("percent" or "flat") and value; an empty code removes the coupon. Fields
+ * that were not sent are left unchanged (undefined).
+ */
+const parseCouponFields = (body: Record<string, unknown>):
+  | { error: string }
+  | { data: { code?: string | null; discountType?: string | null; discountValue?: Prisma.Decimal | null; minOrderAmount?: Prisma.Decimal | null } } => {
+  const rawCode = body.code;
+  if (rawCode === undefined) return { data: {} };
+
+  if (rawCode === null || (typeof rawCode === "string" && !rawCode.trim())) {
+    return { data: { code: null, discountType: null, discountValue: null, minOrderAmount: null } };
+  }
+
+  if (typeof rawCode !== "string" || !/^[A-Za-z0-9_-]{3,30}$/.test(rawCode.trim())) {
+    return { error: "Coupon code must be 3–30 letters, numbers, - or _." };
+  }
+
+  const discountType = body.discountType ?? body.discount_type;
+  if (discountType !== "percent" && discountType !== "flat") {
+    return { error: "Choose a discount type: percent or flat." };
+  }
+
+  const discountValue = Number(body.discountValue ?? body.discount_value);
+  if (!Number.isFinite(discountValue) || discountValue <= 0 || (discountType === "percent" && discountValue > 90)) {
+    return { error: discountType === "percent" ? "Percent discount must be between 0 and 90." : "Flat discount must be more than 0." };
+  }
+
+  const rawMin = body.minOrderAmount ?? body.min_order_amount;
+  const minOrder = rawMin === undefined || rawMin === null || rawMin === "" ? null : Number(rawMin);
+  if (minOrder !== null && (!Number.isFinite(minOrder) || minOrder < 0)) {
+    return { error: "Minimum order amount must be 0 or more." };
+  }
+
+  return {
+    data: {
+      code: rawCode.trim().toUpperCase(),
+      discountType,
+      discountValue: new Prisma.Decimal(discountValue.toFixed(2)),
+      minOrderAmount: minOrder === null ? null : new Prisma.Decimal(minOrder.toFixed(2)),
+    },
+  };
+};
+
+/**
+ * Looks up an active coupon and works out its discount on a subtotal.
+ * The discount never exceeds the subtotal.
+ */
+const applyCoupon = async (
+  rawCode: unknown,
+  subtotal: Prisma.Decimal
+): Promise<{ error: string } | { offer: OfferRecord; discount: Prisma.Decimal }> => {
+  if (typeof rawCode !== "string" || !rawCode.trim()) {
+    return { error: "Please enter a coupon code." };
+  }
+
+  const offer = await prisma.offer.findUnique({ where: { code: rawCode.trim().toUpperCase() } });
+
+  if (!offer || offer.status.toLowerCase() !== "active" || !offer.discountType || !offer.discountValue) {
+    return { error: "This coupon code is not valid." };
+  }
+
+  if (offer.minOrderAmount && subtotal.lessThan(offer.minOrderAmount)) {
+    return { error: `This coupon needs an order of at least ₹${offer.minOrderAmount.toNumber().toLocaleString("en-IN")}.` };
+  }
+
+  const rawDiscount =
+    offer.discountType === "percent"
+      ? subtotal.mul(offer.discountValue).div(100).toDecimalPlaces(2)
+      : offer.discountValue;
+
+  return { offer, discount: Prisma.Decimal.min(rawDiscount, subtotal) };
+};
+
+const couponRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: "Too many coupon attempts. Please try again later.",
+});
+
+// Preview a coupon's discount at checkout. The order endpoint applies it again
+// on the server, so this is only for showing the customer the new total.
+app.post("/api/coupons/validate", couponRateLimit, async (req, res) => {
+  try {
+    const subtotal = Number(req.body.subtotal);
+
+    if (!Number.isFinite(subtotal) || subtotal < 0) {
+      return res.status(422).json({ message: "Invalid subtotal." });
+    }
+
+    const result = await applyCoupon(req.body.code, new Prisma.Decimal(subtotal.toFixed(2)));
+
+    if ("error" in result) {
+      return res.status(422).json({ message: result.error });
+    }
+
+    return res.json({
+      code: result.offer.code,
+      title: result.offer.title,
+      discount_amount: result.discount.toFixed(2),
+    });
+  } catch (error) {
+    console.error("Validate coupon API error:", error);
+    return res.status(500).json({ message: "Unable to check the coupon." });
+  }
+});
+
 app.get("/api/admin/offers", authenticateAdmin, async (req, res) => {
   try {
     const offers = await prisma.offer.findMany({
@@ -915,18 +1458,7 @@ app.get("/api/admin/offers", authenticateAdmin, async (req, res) => {
       },
     });
 
-    return res.json(
-      offers.map((offer) => ({
-        id: offer.id.toString(),
-        title: offer.title,
-        type: offer.type,
-        value: offer.value,
-        description: offer.description,
-        status: offer.status,
-        created_at: offer.createdAt,
-        updated_at: offer.updatedAt,
-      }))
-    );
+    return res.json(offers.map(formatOffer));
   } catch (error) {
     console.error("Get admin offers API error:", error);
 
@@ -1426,6 +1958,7 @@ app.get("/api/settings", async (_req, res) => {
         shipping_policy: "",
         privacy_policy: "",
         terms_policy: "",
+        online_payment: isRazorpayConfigured,
       });
     }
 
@@ -1442,6 +1975,8 @@ app.get("/api/settings", async (_req, res) => {
       shipping_policy: formatted.shipping_policy,
       privacy_policy: formatted.privacy_policy,
       terms_policy: formatted.terms_policy,
+      // Tells checkout whether to open Razorpay or place the order with payment pending.
+      online_payment: isRazorpayConfigured,
     });
   } catch (error) {
     console.error("Public store settings API error:", error);
@@ -1845,6 +2380,11 @@ app.post("/api/admin/offers", authenticateAdmin, async (req, res) => {
       });
     }
 
+    const coupon = parseCouponFields(req.body);
+    if ("error" in coupon) {
+      return res.status(422).json({ message: coupon.error });
+    }
+
     const offer = await prisma.offer.create({
       data: {
         title: title.trim(),
@@ -1852,20 +2392,16 @@ app.post("/api/admin/offers", authenticateAdmin, async (req, res) => {
         value: value.trim(),
         description: description.trim(),
         status: status.trim(),
+        ...coupon.data,
       },
     });
 
-    return res.status(201).json({
-      id: offer.id.toString(),
-      title: offer.title,
-      type: offer.type,
-      value: offer.value,
-      description: offer.description,
-      status: offer.status,
-      created_at: offer.createdAt,
-      updated_at: offer.updatedAt,
-    });
+    return res.status(201).json(formatOffer(offer));
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ message: "Another offer already uses this coupon code." });
+    }
+
     console.error("Create admin offer API error:", error);
 
     return res.status(500).json({
@@ -2013,6 +2549,11 @@ app.put("/api/admin/offers/:id", authenticateAdmin, async (req, res) => {
       });
     }
 
+    const coupon = parseCouponFields(req.body);
+    if ("error" in coupon) {
+      return res.status(422).json({ message: coupon.error });
+    }
+
     const updatedOffer = await prisma.offer.update({
       where: { id: offerId },
       data: {
@@ -2021,20 +2562,16 @@ app.put("/api/admin/offers/:id", authenticateAdmin, async (req, res) => {
         value: value !== undefined ? value.trim() : undefined,
         description: description !== undefined ? description.trim() : undefined,
         status: status !== undefined ? status.trim() : undefined,
+        ...coupon.data,
       },
     });
 
-    return res.json({
-      id: updatedOffer.id.toString(),
-      title: updatedOffer.title,
-      type: updatedOffer.type,
-      value: updatedOffer.value,
-      description: updatedOffer.description,
-      status: updatedOffer.status,
-      created_at: updatedOffer.createdAt,
-      updated_at: updatedOffer.updatedAt,
-    });
+    return res.json(formatOffer(updatedOffer));
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ message: "Another offer already uses this coupon code." });
+    }
+
     console.error("Update admin offer API error:", error);
 
     return res.status(500).json({
@@ -3400,38 +3937,13 @@ app.get("/api/my-orders", authenticateCustomer, async (req, res) => {
       where: {
         userId: customerId,
       },
-      include: {
-        items: true,
-      },
+      include: orderDetailsInclude,
       orderBy: {
         createdAt: "desc",
       },
     });
 
-    const formattedOrders = orders.map((order) => ({
-      id: order.id.toString(),
-      order_number: order.orderNumber,
-      customer_name: order.customerName,
-      customer_phone: order.customerPhone,
-      customer_address: order.customerAddress,
-      total_amount: order.totalAmount.toString(),
-      amount: order.totalAmount.toString(),
-      status: order.status,
-      payment_status: order.paymentStatus,
-      expected_delivery_date: order.expectedDeliveryDate,
-      created_at: order.createdAt,
-      updated_at: order.updatedAt,
-      items: order.items.map((item) => ({
-        id: item.id.toString(),
-        order_id: item.orderId.toString(),
-        product_id: item.productId.toString(),
-        product_name: item.productName,
-        quantity: item.quantity,
-        price: item.price.toString(),
-      })),
-    }));
-
-    return res.json(formattedOrders);
+    return res.json(orders.map(formatOrder));
   } catch (error) {
     console.error("Get customer orders API error:", error);
 
@@ -3487,37 +3999,7 @@ app.get("/api/my-orders/:id", authenticateCustomer, async (req, res) => {
       });
     }
 
-    return res.json({
-      id: order.id.toString(),
-      order_number: order.orderNumber,
-      customer_name: order.customerName,
-      customer_phone: order.customerPhone,
-      customer_address: order.customerAddress,
-      total_amount: order.totalAmount.toString(),
-      amount: order.totalAmount.toString(),
-      status: order.status,
-      payment_status: order.paymentStatus,
-      expected_delivery_date: order.expectedDeliveryDate,
-      created_at: order.createdAt,
-      updated_at: order.updatedAt,
-      items: order.items.map((item) => ({
-        id: item.id.toString(),
-        order_id: item.orderId.toString(),
-        product_id: item.productId.toString(),
-        product_name: item.productName,
-        quantity: item.quantity,
-        price: item.price.toString(),
-      })),
-      status_history: order.statusHistory.map((history) => ({
-        id: history.id.toString(),
-        order_id: history.orderId.toString(),
-        changed_by: history.changedBy?.toString() ?? null,
-        status: history.status,
-        note: history.note,
-        created_at: history.createdAt,
-        updated_at: history.updatedAt,
-      })),
-    });
+    return res.json(formatOrder(order));
   } catch (error) {
     console.error("Get customer order detail API error:", error);
 
@@ -3636,18 +4118,9 @@ app.get("/api/offers", async (req, res) => {
       },
     });
 
-    return res.json(
-      offers.map((offer) => ({
-        id: offer.id.toString(),
-        title: offer.title,
-        type: offer.type,
-        value: offer.value,
-        description: offer.description,
-        status: offer.status,
-        created_at: offer.createdAt,
-        updated_at: offer.updatedAt,
-      }))
-    );
+    // Active offers, including their coupon code, are public: the storefront shows
+    // them so customers can use the code.
+    return res.json(offers.map(formatOffer));
   } catch (error) {
     console.error("Public offers API error:", error);
 
@@ -3852,6 +4325,7 @@ app.get("/api/orders", authenticateAdmin, async (req, res) => {
       customer_name: order.customerName,
       customer_phone: order.customerPhone,
       customer_address: order.customerAddress,
+      ...orderMoneyFields(order),
       total_amount: order.totalAmount.toString(),
       amount: order.totalAmount.toString(),
       status: order.status,
@@ -4090,7 +4564,32 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
     });
     const subtotalAmount = totalAmount;
     const shippingAmount = calculateShipping(subtotalAmount, storeSettings);
-    totalAmount = subtotalAmount.add(shippingAmount);
+
+    // Coupon: checked and calculated here on the server, never taken from the browser.
+    const rawCouponCode = req.body.couponCode ?? req.body.coupon_code;
+    let discountAmount = new Prisma.Decimal(0);
+    let appliedCouponCode: string | null = null;
+
+    if (typeof rawCouponCode === "string" && rawCouponCode.trim()) {
+      const coupon = await applyCoupon(rawCouponCode, subtotalAmount);
+
+      if ("error" in coupon) {
+        return res.status(422).json({ message: coupon.error });
+      }
+
+      discountAmount = coupon.discount;
+      appliedCouponCode = coupon.offer.code;
+    }
+
+    totalAmount = subtotalAmount.sub(discountAmount).add(shippingAmount);
+
+    // Razorpay's minimum charge is 100 paise (₹1). A coupon can bring the total
+    // below that, so refuse such an order instead of failing at payment time.
+    if (isRazorpayConfigured && totalAmount.lessThan(1)) {
+      return res.status(422).json({
+        message: "The order total must be at least ₹1 to pay online. Please remove the coupon or add another item.",
+      });
+    }
 
     // Random suffix so two orders in the same millisecond cannot share a number.
     const orderNumber = `ORD-${Date.now()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
@@ -4139,6 +4638,10 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
           customerPhone: selectedAddress.phone,
           customerAddress: customerAddressText,
           totalAmount: new Prisma.Decimal(totalAmount.toFixed(2)),
+          subtotalAmount: new Prisma.Decimal(subtotalAmount.toFixed(2)),
+          shippingAmount: new Prisma.Decimal(shippingAmount.toFixed(2)),
+          discountAmount: new Prisma.Decimal(discountAmount.toFixed(2)),
+          couponCode: appliedCouponCode,
           status: "Pending",
           paymentStatus: "Pending",
           expectedDeliveryDate: new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 24 * 60 * 60 * 1000),
@@ -4176,6 +4679,27 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       });
     });
 
+    // Online payment: open a Razorpay order for the total. The customer pays in
+    // the Razorpay popup; /api/payments/razorpay/verify (or the webhook) marks it paid.
+    let payment: Record<string, unknown> | null = null;
+
+    if (isRazorpayConfigured) {
+      try {
+        payment = await startRazorpayPayment(createdOrder.id, createdOrder.orderNumber, createdOrder.totalAmount);
+      } catch (error) {
+        console.error("Razorpay order creation failed:", error);
+        await prisma.$transaction((tx) =>
+          cancelOrderAndRestock(tx, createdOrder.id, null, "Online payment could not be started.")
+        );
+        return res.status(502).json({
+          message: "Online payment is unavailable right now. Your order was not placed; please try again shortly.",
+        });
+      }
+    } else {
+      // No gateway: the order is placed with payment pending; confirm by email now.
+      void emailOrderPlaced(createdOrder.id);
+    }
+
     return res.status(201).json({
       id: createdOrder.id.toString(),
       order_number: createdOrder.orderNumber,
@@ -4184,6 +4708,9 @@ app.post("/api/orders", authenticateCustomer, async (req, res) => {
       customer_address: createdOrder.customerAddress,
       subtotal_amount: subtotalAmount.toFixed(2),
       shipping_amount: shippingAmount.toFixed(2),
+      discount_amount: discountAmount.toFixed(2),
+      coupon_code: appliedCouponCode,
+      payment,
       total_amount: createdOrder.totalAmount.toString(),
       amount: createdOrder.totalAmount.toString(),
       status: createdOrder.status,
@@ -4301,28 +4828,12 @@ const orderId = BigInt(rawOrderId);
       });
     }
 
+    let justCancelled = false;
+
     const updatedOrder = await prisma.$transaction(async (tx) => {
   if (status === "Cancelled") {
-    // Only the request that actually moves the order into Cancelled restocks,
-    // so two cancels arriving together cannot return the stock twice.
-    const { count } = await tx.order.updateMany({
-      where: { id: orderId, status: { not: "Cancelled" } },
-      data: { status },
-    });
-
-    if (count === 1) {
-      const items = await tx.orderItem.findMany({
-        where: { orderId },
-        select: { productId: true, quantity: true },
-      });
-
-      for (const item of items) {
-        await tx.product.updateMany({
-          where: { id: item.productId },
-          data: { stock: { increment: item.quantity } },
-        });
-      }
-    }
+    // Returns stock and writes the history entry, once, even if two cancels race.
+    justCancelled = await cancelOrderAndRestock(tx, orderId, res.locals.adminId, note || "Cancelled by the store.");
 
     if (paymentStatus !== undefined) {
       await tx.order.update({
@@ -4338,17 +4849,17 @@ const orderId = BigInt(rawOrderId);
         ...(paymentStatus !== undefined ? { paymentStatus } : {}),
       },
     });
-  }
 
-  if (existingOrder.status !== status) {
-    await tx.orderStatusHistory.create({
-      data: {
-        orderId,
-        changedBy: res.locals.adminId,
-        status,
-        note: note || null,
-      },
-    });
+    if (existingOrder.status !== status) {
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          changedBy: res.locals.adminId,
+          status,
+          note: note || null,
+        },
+      });
+    }
   }
 
   return await tx.order.findUniqueOrThrow({
@@ -4362,37 +4873,24 @@ const orderId = BigInt(rawOrderId);
   });
 });
 
-    return res.json({
-      id: updatedOrder.id.toString(),
-      order_number: updatedOrder.orderNumber,
-      customer_name: updatedOrder.customerName,
-      customer_phone: updatedOrder.customerPhone,
-      customer_address: updatedOrder.customerAddress,
-      total_amount: updatedOrder.totalAmount.toString(),
-      amount: updatedOrder.totalAmount.toString(),
-      status: updatedOrder.status,
-      payment_status: updatedOrder.paymentStatus,
-      expected_delivery_date: updatedOrder.expectedDeliveryDate,
-      created_at: updatedOrder.createdAt,
-      updated_at: updatedOrder.updatedAt,
-      items: updatedOrder.items.map((item) => ({
-        id: item.id.toString(),
-        order_id: item.orderId.toString(),
-        product_id: item.productId.toString(),
-        product_name: item.productName,
-        quantity: item.quantity,
-        price: item.price.toString(),
-      })),
-      status_history: updatedOrder.statusHistory.map((history) => ({
-  id: history.id.toString(),
-  order_id: history.orderId.toString(),
-  changed_by: history.changedBy?.toString() ?? null,
-  status: history.status,
-  note: history.note,
-  created_at: history.createdAt,
-  updated_at: history.updatedAt,
-})),
-    });
+    // A paid online order that the store cancels is refunded automatically.
+    if (justCancelled) {
+      await refundIfPaidOnline(orderId);
+    }
+
+    // Tell the customer when the order status changes.
+    if (existingOrder.status !== status) {
+      void emailOrderStatus(orderId, typeof note === "string" && note.trim() ? note.trim() : null);
+    }
+
+    const finalOrder = justCancelled
+      ? await prisma.order.findUniqueOrThrow({
+          where: { id: orderId },
+          include: { items: true, statusHistory: { orderBy: { createdAt: "desc" } } },
+        })
+      : updatedOrder;
+
+    return res.json(formatOrder(finalOrder));
  } catch (error) {
   console.error("Update order API error:", error);
 
@@ -4402,6 +4900,188 @@ const orderId = BigInt(rawOrderId);
 }
 });
 
+
+// ── Customer order actions: pay, cancel, guest tracking ────────────────────────
+
+/** Loads one of the signed-in customer's orders by numeric id, or sends the error response. */
+const loadOwnOrder = async (req: express.Request, res: express.Response) => {
+  const rawOrderId = req.params.id;
+
+  if (typeof rawOrderId !== "string" || !/^\d+$/.test(rawOrderId)) {
+    res.status(400).json({ message: "Invalid order ID." });
+    return null;
+  }
+
+  const order = await prisma.order.findUnique({ where: { id: BigInt(rawOrderId) } });
+
+  if (!order || order.userId !== (res.locals.customerId as bigint)) {
+    // Same answer for "not found" and "someone else's", so ids cannot be probed.
+    res.status(404).json({ message: "Order not found." });
+    return null;
+  }
+
+  return order;
+};
+
+// Called by the storefront after the Razorpay popup reports success.
+app.post("/api/payments/razorpay/verify", authenticateCustomer, async (req, res) => {
+  try {
+    const razorpayOrderId = req.body.razorpay_order_id;
+    const razorpayPaymentId = req.body.razorpay_payment_id;
+    const signature = req.body.razorpay_signature;
+
+    if (
+      typeof razorpayOrderId !== "string" ||
+      typeof razorpayPaymentId !== "string" ||
+      typeof signature !== "string" ||
+      !verifyCheckoutSignature(razorpayOrderId, razorpayPaymentId, signature)
+    ) {
+      return res.status(400).json({ message: "Payment could not be verified." });
+    }
+
+    const order = await prisma.order.findUnique({ where: { razorpayOrderId } });
+
+    if (!order || order.userId !== (res.locals.customerId as bigint)) {
+      return res.status(404).json({ message: "Order not found." });
+    }
+
+    const paidOrderId = await markRazorpayOrderPaid(razorpayOrderId, razorpayPaymentId);
+    if (paidOrderId) void emailOrderPlaced(paidOrderId);
+
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: order.id }, include: orderDetailsInclude });
+    return res.json(formatOrder(fresh));
+  } catch (error) {
+    console.error("Verify Razorpay payment API error:", error);
+    return res.status(500).json({ message: "Unable to verify the payment." });
+  }
+});
+
+// Pay again for an order whose payment popup was closed or failed.
+app.post("/api/my-orders/:id/pay", authenticateCustomer, async (req, res) => {
+  try {
+    if (!isRazorpayConfigured) {
+      return res.status(503).json({ message: "Online payment is not available." });
+    }
+
+    const order = await loadOwnOrder(req, res);
+    if (!order) return;
+
+    if (order.status === "Cancelled" || order.paymentStatus === "Paid" || order.paymentStatus === "Refunded") {
+      return res.status(422).json({ message: "This order cannot be paid." });
+    }
+
+    const payment = await startRazorpayPayment(order.id, order.orderNumber, order.totalAmount);
+    return res.json({ order_number: order.orderNumber, payment });
+  } catch (error) {
+    console.error("Retry payment API error:", error);
+    return res.status(502).json({ message: "Online payment is unavailable right now. Please try again shortly." });
+  }
+});
+
+// Customers may cancel until the order is packed. Paid orders are refunded.
+app.post("/api/my-orders/:id/cancel", authenticateCustomer, async (req, res) => {
+  try {
+    const order = await loadOwnOrder(req, res);
+    if (!order) return;
+
+    if (!CUSTOMER_CANCELLABLE_STATUSES.includes(order.status)) {
+      return res.status(422).json({
+        message:
+          order.status === "Cancelled"
+            ? "This order is already cancelled."
+            : "This order has already been packed or shipped and can no longer be cancelled. Please contact us.",
+      });
+    }
+
+    const cancelled = await prisma.$transaction(async (tx) => {
+      // Re-check inside the transaction: the store may have packed it meanwhile.
+      const current = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
+      if (!CUSTOMER_CANCELLABLE_STATUSES.includes(current.status)) return false;
+      return cancelOrderAndRestock(tx, order.id, res.locals.customerId as bigint, "Cancelled by the customer.");
+    });
+
+    if (!cancelled) {
+      return res.status(422).json({ message: "This order can no longer be cancelled." });
+    }
+
+    await refundIfPaidOnline(order.id);
+    void emailOrderStatus(order.id, "Cancelled at your request.");
+
+    const fresh = await prisma.order.findUniqueOrThrow({ where: { id: order.id }, include: orderDetailsInclude });
+    return res.json(formatOrder(fresh));
+  } catch (error) {
+    console.error("Customer cancel order API error:", error);
+    return res.status(500).json({ message: "Unable to cancel the order." });
+  }
+});
+
+const trackOrderRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: "Too many tracking attempts. Please try again later.",
+});
+
+/** Digits only, last 10, so "+91 98765 43210" and "9876543210" match. */
+const phoneKey = (phone: string) => phone.replace(/\D/g, "").slice(-10);
+
+// Guest tracking: order number + the phone number used on the order. Returns
+// status and items only, no address.
+app.get("/api/track-order", trackOrderRateLimit, async (req, res) => {
+  try {
+    const orderNumber = typeof req.query.order_number === "string" ? req.query.order_number.trim() : "";
+    const phone = typeof req.query.phone === "string" ? req.query.phone : "";
+
+    if (!orderNumber || phoneKey(phone).length < 10) {
+      return res.status(422).json({ message: "Enter your order number and the 10-digit phone number used on the order." });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { orderNumber },
+      include: orderDetailsInclude,
+    });
+
+    if (!order || phoneKey(order.customerPhone) !== phoneKey(phone)) {
+      return res.status(404).json({ message: "No order matches that order number and phone number." });
+    }
+
+    const { customer_address: _address, customer_phone: _phone, ...publicOrder } = formatOrder(order);
+    return res.json({ ...publicOrder, can_cancel: false });
+  } catch (error) {
+    console.error("Guest track order API error:", error);
+    return res.status(500).json({ message: "Unable to look up the order." });
+  }
+});
+
+/**
+ * Cancel online orders that were never paid, so their stock goes back on sale.
+ * Runs every 5 minutes; only touches orders that started a Razorpay payment.
+ */
+const releaseUnpaidOrders = async () => {
+  const cutoff = new Date(Date.now() - UNPAID_ORDER_TIMEOUT_MINUTES * 60 * 1000);
+
+  const stale = await prisma.order.findMany({
+    where: {
+      razorpayOrderId: { not: null },
+      paymentStatus: "Pending",
+      status: "Pending",
+      createdAt: { lt: cutoff },
+    },
+    select: { id: true },
+    take: 100,
+  });
+
+  for (const { id } of stale) {
+    await prisma
+      .$transaction((tx) => cancelOrderAndRestock(tx, id, null, "Cancelled automatically: payment was not completed."))
+      .catch((error) => console.error("Releasing unpaid order failed:", error));
+  }
+};
+
+if (isRazorpayConfigured) {
+  setInterval(() => {
+    void releaseUnpaidOrders().catch((error) => console.error("Unpaid order check failed:", error));
+  }, 5 * 60 * 1000).unref();
+}
 
 // Unknown routes get a JSON 404 instead of Express's HTML page.
 app.use((_req: express.Request, res: express.Response) => {

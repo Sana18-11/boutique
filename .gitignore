@@ -3,6 +3,8 @@ dist/
 build/
 .cache/
 .env*
+# Example env files hold no secrets and document the settings.
+!.env.example
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
