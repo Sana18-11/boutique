@@ -1,4 +1,8 @@
 import { createContext, useContext, useState, useEffect, useRef, type FormEvent } from 'react'
+import brownCottonSareeImg from './assets/brown-cotton-saree.webp'
+import semiSilkSareeImg from './assets/semi-silk-saree.webp'
+import yaaleLogoTransparent from './assets/yaale-logo-transparent.png'
+import yaaleLogoJpeg from './assets/yaale-logo.jpeg'
 
 interface GsapMatchMedia {
   add: (query: string, callback: () => void) => void
@@ -228,7 +232,7 @@ const paymentStatusColor = (status: string | null | undefined) => ({
 const isPurchasable = (p: Pick<Product, 'inStock' | 'stock'>) => p.inStock && (p.stock ?? 0) > 0
 
 const getProductMainImage = (p: Partial<Product> | null | undefined): string => {
-  if (!p) return '/yaale-logo-transparent.png'
+  if (!p) return yaaleLogoTransparent
   if (p.image) {
     const url = productImageUrl(p.image)
     if (url) return url
@@ -239,7 +243,7 @@ const getProductMainImage = (p: Partial<Product> | null | undefined): string => 
       if (url) return url
     }
   }
-  return '/yaale-logo-transparent.png'
+  return yaaleLogoTransparent
 }
 
 interface Product {
@@ -543,7 +547,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
         {/* Logo */}
         <button onClick={() => setPage('home')} className="flex items-center leading-none cursor-pointer" aria-label="Yaale home">
-          <img src="/yaale-logo-transparent.png" alt="Yaale, Soulful Weaves" className="h-[68px] w-[68px] object-contain" />
+          <img src={yaaleLogoTransparent} alt="Yaale, Soulful Weaves" className="h-[68px] w-[68px] object-contain" />
         </button>
 
         {/* Desktop Nav */}
@@ -693,7 +697,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
       onMouseLeave={handleMouseLeave}
     >
       <div className={`relative overflow-hidden bg-[#f0e9dd] ${shopCard ? 'shop-product-frame rounded-[20px]' : 'rounded-3xl'}`} style={shopCard ? { aspectRatio: '3 / 4' } : { aspectRatio: '3 / 4' }} onClick={() => onClick(p)}>
-        <img ref={imageRef} src={imgSrc} alt={p.name} loading="lazy" onError={() => setImgSrc('/yaale-logo-transparent.png')}
+        <img ref={imageRef} src={imgSrc} alt={p.name} loading="lazy" onError={() => setImgSrc(yaaleLogoTransparent)}
           className={`shop-product-image h-full w-full object-cover transition-transform duration-700 ease-out ${hovered ? 'scale-[1.06]' : 'scale-100'}`} />
         <div className="absolute inset-0 bg-charcoal/0 group-hover:bg-charcoal/10 transition-colors duration-300 rounded-[20px]" />
 
@@ -921,13 +925,42 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
         </div>
         <div className="flex gap-3 overflow-x-auto px-1 pb-4 snap-x snap-mandatory sm:gap-6 md:grid md:grid-cols-3 md:overflow-visible md:px-0 md:pb-0">
           {[
-            { title: 'Soft Silk Sarees', desc: 'Elegant traditional silk, woven for royalty.', img: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format', cat: 'Soft Silk' },
-            { title: 'Cotton Sarees', desc: 'Light, breathable, and timelessly graceful.', img: '/brown-cotton-saree.webp', cat: 'Cotton' },
-            { title: 'Semi Silk Sarees', desc: 'A refined blend of tradition and modernity.', img: '/semi-silk-saree.webp', cat: 'Semi Silk' },
+            {
+              title: 'Soft Silk Sarees',
+              desc: 'Elegant traditional silk, woven for royalty.',
+              img: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format',
+              fallback: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format',
+              cat: 'Soft Silk',
+            },
+            {
+              title: 'Cotton Sarees',
+              desc: 'Light, breathable, and timelessly graceful.',
+              img: brownCottonSareeImg,
+              fallback: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=900&h=1200&fit=crop&auto=format',
+              cat: 'Cotton',
+            },
+            {
+              title: 'Semi Silk Sarees',
+              desc: 'A refined blend of tradition and modernity.',
+              img: semiSilkSareeImg,
+              fallback: 'https://images.unsplash.com/photo-1618489335755-e3aa2b16cd7a?w=900&h=1200&fit=crop&auto=format',
+              cat: 'Semi Silk',
+            },
           ].map(c => (
             <div key={c.cat} className="group relative w-[172px] flex-shrink-0 snap-start cursor-pointer sm:w-[230px] md:w-auto md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
               <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full">
-                <img src={c.img} alt={c.title} style={{ objectPosition: 'center 20%' }} className="absolute inset-0 h-full w-full object-cover object-center scale-[1.05] group-hover:scale-[1.08] transition-transform duration-700" />
+                <img
+                  src={c.img}
+                  alt={c.title}
+                  style={{ objectPosition: 'center 20%' }}
+                  onError={(e) => {
+                    const target = e.currentTarget
+                    if (target.src !== c.fallback) {
+                      target.src = c.fallback
+                    }
+                  }}
+                  className="absolute inset-0 h-full w-full object-cover object-center scale-[1.05] group-hover:scale-[1.08] transition-transform duration-700"
+                />
                 <div className="absolute inset-0 rounded-full bg-gradient-to-t from-charcoal/90 via-charcoal/15 to-transparent" />
                 <div className="absolute inset-x-0 bottom-0 p-3 text-center sm:p-5 md:p-7">
                   <h3 className="font-serif text-lg text-white sm:text-2xl">{c.title}</h3>
@@ -1402,7 +1435,7 @@ const inWish = wishlist.includes(p.id)
                 src={selectedImage || mainImg}
                 alt={p.name}
                 className="pd-main-img"
-                onError={(e) => { (e.target as HTMLImageElement).src = '/yaale-logo-transparent.png' }}
+                onError={(e) => { (e.target as HTMLImageElement).src = yaaleLogoTransparent }}
               />
             </div>
 
@@ -6765,7 +6798,7 @@ function Footer({ setPage }: { setPage: (p: Page) => void }) {
     <footer className="bg-charcoal text-white mt-0">
       <div className="max-w-7xl mx-auto px-6 sm:px-8 py-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
         <div>
-          <img src="/yaale-logo.jpeg" alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
+          <img src={yaaleLogoJpeg} alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
           <p className="text-white/50 text-sm font-light leading-relaxed">Handpicked sarees from India's finest weavers. Crafted for moments that matter.</p>
           <address className="mt-3 text-sm text-white/60 font-light leading-relaxed not-italic">
             <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(footerAddress)}`} target="_blank" rel="noreferrer">

@@ -263,92 +263,13 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 5. CURVED & WAVY SECTION DIVIDERS (--maroon-deep & --maroon)
+  // 5. CURVED & WAVY SECTION DIVIDERS (REMOVED)
   // ─────────────────────────────────────────────────────────────────────────────
-  const createWaveDivider = (waveColor, nextBgColor, flipped = false) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'yaale-wave-divider';
-    if (nextBgColor) wrap.style.backgroundColor = nextBgColor;
-    if (flipped) wrap.style.transform = 'rotate(180deg)';
-
-    wrap.innerHTML = `
-      <svg viewBox="0 0 1440 88" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
-        <path d="M0,32 C320,84 720,-12 1120,44 C1280,68 1380,56 1440,48 L1440,88 L0,88 Z" fill="${waveColor}"></path>
-      </svg>
-    `;
-    return wrap;
-  };
+  const createWaveDivider = () => null;
 
   const insertSectionDividers = () => {
-    const sections = document.querySelectorAll('section');
-    if (sections.length < 3) return;
-
-    if (document.querySelector('.yaale-wave-divider')) return;
-
-    // 1. Below Hero (Dark #2B1C1A) -> Categories (#FBFAF7)
-    // Divider uses --maroon-deep (#4E1D16) with --bg-main (#FBFAF7)
-    if (sections[0] && sections[1]) {
-      const wave1 = createWaveDivider('#4E1D16', '#FBFAF7');
-      sections[0].insertAdjacentElement('afterend', wave1);
-      gsap.fromTo(
-        wave1.querySelector('path'),
-        { x: -35 },
-        {
-          x: 35,
-          ease: 'none',
-          scrollTrigger: {
-            trigger: wave1,
-            start: 'top bottom',
-            end: 'bottom top',
-            scrub: 1,
-          },
-        }
-      );
-    }
-
-    // 2. Below Categories -> New Arrivals (#F3EEE8)
-    // Divider uses --maroon (#7A0C32) with --bg-soft (#F3EEE8)
-    const newArrivals = document.querySelector('section.bg-cream');
-    if (newArrivals) {
-      const wave2 = createWaveDivider('#7A0C32', '#F3EEE8');
-      newArrivals.insertAdjacentElement('beforebegin', wave2);
-      gsap.fromTo(
-        wave2.querySelector('path'),
-        { x: 30 },
-        {
-          x: -30,
-          ease: 'none',
-          scrollTrigger: {
-            trigger: wave2,
-            start: 'top bottom',
-            end: 'bottom top',
-            scrub: 1,
-          },
-        }
-      );
-    }
-
-    // 3. Above Testimonials Stats Strip (Dark #2B1C1A)
-    // Divider uses --maroon-deep (#4E1D16) with --bg-dark (#2B1C1A)
-    const statsSection = document.querySelector('section.bg-charcoal.py-16');
-    if (statsSection) {
-      const wave3 = createWaveDivider('#4E1D16', '#2B1C1A');
-      statsSection.insertAdjacentElement('beforebegin', wave3);
-      gsap.fromTo(
-        wave3.querySelector('path'),
-        { x: -40 },
-        {
-          x: 40,
-          ease: 'none',
-          scrollTrigger: {
-            trigger: wave3,
-            start: 'top bottom',
-            end: 'bottom top',
-            scrub: 1,
-          },
-        }
-      );
-    }
+    // Remove any wave dividers if present
+    document.querySelectorAll('.yaale-wave-divider').forEach((el) => el.remove());
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
