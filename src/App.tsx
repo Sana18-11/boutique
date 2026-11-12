@@ -1263,21 +1263,21 @@ function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, on
               title: 'Soft Silk Sarees',
               desc: 'Elegant traditional silk, woven for royalty.',
               img: heroBigImg,
-              fallback: semiSilkSareeImg,
+              fallback: '/hero-big.webp',
               cat: 'Soft Silk',
             },
             {
               title: 'Cotton Sarees',
               desc: 'Light, breathable, and timelessly graceful.',
               img: brownCottonSareeImg,
-              fallback: heroSmallImg,
+              fallback: '/brown-cotton-saree.png',
               cat: 'Cotton',
             },
             {
               title: 'Semi Silk Sarees',
               desc: 'A refined blend of tradition and modernity.',
               img: semiSilkSareeImg,
-              fallback: brownCottonSareeImg,
+              fallback: '/semi-silk-saree.webp',
               cat: 'Semi Silk',
             },
           ].map(c => (
@@ -5947,12 +5947,12 @@ const updateSaree = async () => {
       </div>
 
       {/* Desktop Sidebar */}
-      <aside className="w-64 bg-[#063737] flex-shrink-0 flex flex-col hidden lg:flex min-h-screen sticky top-0 max-h-screen overflow-y-auto">
-        <div className="px-6 py-6 border-b border-white/10">
+      <aside className="admin-sidebar w-64 bg-[#063737] flex-shrink-0 flex flex-col hidden lg:flex lg:sticky lg:top-0 lg:h-[100dvh] lg:self-start">
+        <div className="px-6 py-6 border-b border-white/10 flex-shrink-0">
           <p className="font-serif text-2xl text-[#e8d5b0]">Yaale</p>
           <p className="text-[#a89070] text-[9px] tracking-widest uppercase mt-1">Admin Panel</p>
         </div>
-        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 min-h-0 py-4 px-3 space-y-1 overflow-y-auto">
           {sidebarItems.map(item => (
             <button key={item} onClick={() => setTab(item)}
               className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${tab === item ? 'bg-[#c9a96e]/25 text-[#e8d5b0] border border-[#c9a96e]/30' : 'text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0]'}`}>
@@ -5960,7 +5960,7 @@ const updateSaree = async () => {
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-white/10 space-y-2">
+        <div className="mt-auto p-4 border-t border-white/10 space-y-2 flex-shrink-0">
           <button onClick={() => setPage('home')} className="w-full text-left px-4 py-2.5 rounded-xl text-sm text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0] transition-all">
             ← View Store
           </button>
@@ -5971,7 +5971,7 @@ const updateSaree = async () => {
       </aside>
 
       {/* Main */}
-      <main className="min-w-0 flex-1 overflow-auto">
+      <main className="min-w-0 flex-1">
         <div className="p-4 sm:p-8">
           {/* Top bar */}
           <div className="flex items-center justify-between mb-6">
@@ -6552,24 +6552,26 @@ const updateSaree = async () => {
                         <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-red-700">{productsError}</td></tr>
                       ) : products.length === 0 ? (
                         <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-[#7a6a62]">No sarees found in catalogue.</td></tr>
-                      ) : products.map(p => (
+                      ) : products.map(p => {
+                        const thumbUrl = p.images?.find(image => image && image.trim()) || p.image
+                        return (
                         <tr key={p.id} className="border-t border-[#f0e8e0] text-sm hover:bg-[#faf6f1]/50 transition-colors">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-12 rounded-xl overflow-hidden bg-[#f0e9dd] flex-shrink-0 border border-[#e8ddd5]">
-                               <img
-  src={p.images?.find(image => image.trim()) || p.image}
-  alt=""
-  className="w-full h-full object-cover"
-  onError={event => {
-    const image = event.currentTarget
-    if (p.image && image.src !== p.image) {
-      image.src = p.image
-      return
-    }
-    image.style.display = 'none'
-  }}
-/>
+                              <div className="w-12 h-12 rounded-xl overflow-hidden bg-[#F4EAE2] flex-shrink-0 border border-[#e8ddd5] relative flex items-center justify-center">
+                                <span className="font-serif text-sm font-semibold text-[#8a6840] select-none" aria-hidden="true">
+                                  {p.name?.charAt(0)?.toUpperCase() || 'S'}
+                                </span>
+                                {thumbUrl && (
+                                  <img
+                                    src={thumbUrl}
+                                    alt={p.name}
+                                    className="absolute inset-0 h-full w-full object-cover object-top"
+                                    onError={event => {
+                                      event.currentTarget.style.display = 'none'
+                                    }}
+                                  />
+                                )}
                               </div>
                               <span className="font-medium text-[#1a2e2e]">{p.name}</span>
                               {p.isActive === false && (
@@ -6603,7 +6605,8 @@ const updateSaree = async () => {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
