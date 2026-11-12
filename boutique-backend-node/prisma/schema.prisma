@@ -124,6 +124,13 @@ model Offer {
   value       String   @db.VarChar(255)
   description String
   status      String   @db.VarChar(255)
+  /// Coupon code customers type at checkout (stored upper-case). Null = no code, banner only.
+  code           String?  @unique @db.VarChar(50)
+  /// "percent" or "flat" (rupees off).
+  discountType   String?  @map("discount_type") @db.VarChar(20)
+  discountValue  Decimal? @map("discount_value") @db.Decimal(10, 2)
+  /// Minimum subtotal for the coupon to apply.
+  minOrderAmount Decimal? @map("min_order_amount") @db.Decimal(10, 2)
   createdAt   DateTime? @default(now()) @map("created_at")
   updatedAt   DateTime? @updatedAt @map("updated_at")
 
@@ -189,8 +196,15 @@ model Order {
   customerPhone        String    @map("customer_phone") @db.VarChar(255)
   customerAddress      String    @map("customer_address")
   totalAmount          Decimal   @map("total_amount") @db.Decimal(10, 2)
+  subtotalAmount       Decimal?  @map("subtotal_amount") @db.Decimal(10, 2)
+  shippingAmount       Decimal?  @map("shipping_amount") @db.Decimal(10, 2)
+  discountAmount       Decimal?  @map("discount_amount") @db.Decimal(10, 2)
+  couponCode           String?   @map("coupon_code") @db.VarChar(50)
   status               String    @default("Pending") @db.VarChar(255)
   paymentStatus        String    @default("Pending") @map("payment_status") @db.VarChar(255)
+  /// Razorpay order/payment ids when paid online.
+  razorpayOrderId      String?   @unique @map("razorpay_order_id") @db.VarChar(64)
+  razorpayPaymentId    String?   @map("razorpay_payment_id") @db.VarChar(64)
   expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
   createdAt            DateTime? @default(now()) @map("created_at")
   updatedAt            DateTime? @updatedAt @map("updated_at")

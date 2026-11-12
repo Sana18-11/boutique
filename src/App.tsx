@@ -32,7 +32,7 @@ declare global {
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
-type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard'
+type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard' | 'reset-password'
 // 'ALL' or any category name. Category names come from the admin's categories,
 // so they are not fixed in the code.
 type ShopCategoryFilter = string
@@ -44,11 +44,14 @@ const INSTAGRAM_URL = 'https://www.instagram.com/yaale_sarees?stkn=dXVoZHI2dDhob
 const DEFAULT_CONTACT_EMAIL = 'hello@yaale.in'
 const DEFAULT_CONTACT_PHONE = '+91 98765 43210'
 
-// Backend address. Falls back to production Render backend when deployed.
+// Backend address.
 const PROD_API_URL = 'https://boutique-oldj.onrender.com'
+
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? PROD_API_URL : 'http://localhost:5000')
+  (import.meta.env.PROD
+    ? PROD_API_URL
+    : `${window.location.protocol}//${window.location.hostname}:5000`)
 ).replace(/\/+$/, '')
 
 // Shipping defaults; must match DEFAULT_SHIPPING_FEE / DEFAULT_FREE_SHIPPING_THRESHOLD in the backend.
@@ -77,7 +80,97 @@ const storeSettingsFromApi = (data: Record<string, unknown>): StoreSettingsForm 
   shipping_policy: String(data.shipping_policy ?? ''),
   privacy_policy: String(data.privacy_policy ?? ''),
   terms_policy: String(data.terms_policy ?? ''),
+  online_payment: data.online_payment === true,
 })
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void, on: (event: string, cb: (response: any) => void) => void }
+  }
+}
+
+/** Loads Razorpay's Checkout script once, when it is first needed. */
+const loadRazorpayScript = () => new Promise<boolean>(resolve => {
+  if (window.Razorpay) return resolve(true)
+  const existing = document.querySelector<HTMLScriptElement>('script[data-razorpay]')
+  const script = existing ?? document.createElement('script')
+  script.addEventListener('load', () => resolve(true))
+  script.addEventListener('error', () => resolve(false))
+  if (!existing) {
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.dataset.razorpay = 'true'
+    document.body.appendChild(script)
+  }
+})
+
+/**
+ * Opens the Razorpay popup for an order and, after payment, has the backend
+ * verify it. Resolves 'paid', or 'pending' if the customer closed the popup or
+ * the payment failed (the order stays reserved for 30 minutes and can be paid again).
+ */
+const payWithRazorpay = async (
+  payment: RazorpayPaymentStart,
+  orderNumber: string,
+  token: string,
+  prefill: { name?: string, email?: string, contact?: string }
+): Promise<{ status: 'paid' | 'pending', message?: string }> => {
+  if (!(await loadRazorpayScript()) || !window.Razorpay) {
+    return { status: 'pending', message: 'The payment window could not be loaded. You can pay from My Orders.' }
+  }
+
+  return new Promise(resolve => {
+    let settled = false
+    // Reason for the latest failed attempt, shown if the customer then closes the popup.
+    let lastFailure = ''
+    const finish = (result: { status: 'paid' | 'pending', message?: string }) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+
+    const checkout = new window.Razorpay!({
+      key: payment.key_id,
+      order_id: payment.razorpay_order_id,
+      amount: payment.amount,
+      currency: payment.currency,
+      name: 'Yaale',
+      description: `Order ${orderNumber}`,
+      prefill,
+      theme: { color: '#7A0C32' },
+      handler: async (response: { razorpay_order_id: string, razorpay_payment_id: string, razorpay_signature: string }) => {
+        try {
+          const verify = await fetch(`${API_BASE_URL}/api/payments/razorpay/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(response),
+          })
+          const data = await verify.json().catch(() => ({}))
+          finish(verify.ok && data.payment_status === 'Paid'
+            ? { status: 'paid' }
+            : { status: 'pending', message: data.message || 'We could not confirm the payment yet. If money was taken, it will show as paid shortly.' })
+        } catch {
+          finish({ status: 'pending', message: 'We could not confirm the payment yet. If money was taken, it will show as paid shortly.' })
+        }
+      },
+      modal: {
+        ondismiss: () => finish({
+          status: 'pending',
+          message: lastFailure
+            ? `Payment failed: ${lastFailure} Your order is held for 30 minutes; you can try again from My Orders.`
+            : 'Payment was cancelled. Your order is held for 30 minutes; you can pay from My Orders.',
+        }),
+      },
+    })
+
+    // Razorpay keeps the popup open after a failure so the customer can try another
+    // method; remember why it failed for the message shown when they close it.
+    checkout.on('payment.failed', (response: { error?: { description?: string, reason?: string } }) => {
+      const description = response?.error?.description?.trim()
+      lastFailure = description ? (description.endsWith('.') ? description : `${description}.`) : 'The bank declined the payment.'
+    })
+    checkout.open()
+  })
+}
 const productImageUrl = (image: unknown) => {
   if (typeof image !== 'string' || !image.trim()) return ''
 
@@ -286,8 +379,31 @@ interface CustomerOrder {
   status: string
   created_at: string
   expected_delivery_date?: string | null
+  subtotal_amount?: string | null
+  shipping_amount?: string | null
+  discount_amount?: string | null
+  coupon_code?: string | null
+  /** True while the customer may still cancel (Pending or Confirmed). */
+  can_cancel?: boolean
   items: CustomerOrderItem[]
   status_history: CustomerOrderStatusEvent[]
+}
+
+/** What the backend returns to open the Razorpay Checkout popup. */
+interface RazorpayPaymentStart {
+  provider: 'razorpay'
+  key_id: string
+  razorpay_order_id: string
+  amount: number
+  currency: string
+}
+
+/** The order just placed, shown on the success page. */
+interface PlacedOrder {
+  id: string
+  order_number: string
+  total_amount: string
+  payment_status: string
 }
 
 interface StoreSettingsForm {
@@ -301,6 +417,8 @@ interface StoreSettingsForm {
   shipping_policy: string
   privacy_policy: string
   terms_policy: string
+  /** Read-only: true when the backend has Razorpay keys, so checkout takes payment online. */
+  online_payment?: boolean
 }
 
 const EMPTY_STORE_SETTINGS: StoreSettingsForm = {
@@ -326,6 +444,11 @@ interface AdminOffer {
   value: string
   description: string
   status: OfferStatus
+  /** Coupon code customers enter at checkout; null for banner-only offers. */
+  code?: string | null
+  discount_type?: 'percent' | 'flat' | null
+  discount_value?: string | null
+  min_order_amount?: string | null
 }
 
 interface OfferForm {
@@ -334,6 +457,15 @@ interface OfferForm {
   value: string
   description: string
   status: OfferStatus
+  code: string
+  discount_type: 'percent' | 'flat'
+  discount_value: string
+  min_order_amount: string
+}
+
+const EMPTY_OFFER_FORM: OfferForm = {
+  title: '', type: 'Discount', value: '', description: '', status: 'Active',
+  code: '', discount_type: 'percent', discount_value: '', min_order_amount: '',
 }
 
 // ── Data ───────────────────────────────────────────────────────────────────
@@ -362,7 +494,27 @@ function useProductsStore() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 function AnnouncementBar() {
-  const message = 'PAN INDIA DELIVERY • SECURE ONLINE PAYMENT • EXCLUSIVELY HANDCRAFTED'
+  const [couponText, setCouponText] = useState('')
+
+  // Show active coupon offers, e.g. "USE CODE FESTIVE10 — 10% off".
+  useEffect(() => {
+    let active = true
+    fetch(`${API_BASE_URL}/api/offers`, { headers: { Accept: 'application/json' } })
+      .then(response => response.ok ? response.json() : [])
+      .then((offers: AdminOffer[]) => {
+        if (!active || !Array.isArray(offers)) return
+        const coupons = offers
+          .filter(offer => offer.code)
+          .map(offer => `USE CODE ${offer.code} — ${offer.title.toUpperCase()}`)
+        setCouponText(coupons.join(' • '))
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
+  const message = ['PAN INDIA DELIVERY', 'SECURE ONLINE PAYMENT', couponText, 'EXCLUSIVELY HANDCRAFTED']
+    .filter(Boolean)
+    .join(' • ')
 
   return (
     <div className="announcement-bar" aria-label="Store announcement">
@@ -1360,6 +1512,19 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
   const [filterOpen, setFilterOpen] = useState(false)
   const [priceRange, setPriceRange] = useState('All Prices')
   const [sort, setSort] = useState('Newest')
+  const [search, setSearch] = useState('')
+
+  // Every search word must appear somewhere in the saree's name, category, fabric,
+  // colour, occasion, SKU or description ("red silk" finds red silk sarees).
+  const searchWords = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const matchesSearch = (p: Product) => {
+    if (searchWords.length === 0) return true
+    const haystack = [p.name, p.category, p.fabric, p.color, p.occasion, p.sku, p.description]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase()
+    return searchWords.every(word => haystack.includes(word))
+  }
   const [apiCategories, setApiCategories] = useState<string[]>([])
 
   // Active categories set up by the admin.
@@ -1387,6 +1552,7 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
   })()
 
   const filtered = (filter === 'ALL' ? products : products.filter(p => normalizeCategory(p.category) === normalizeCategory(filter)))
+    .filter(matchesSearch)
     .filter(p => priceRange === 'All Prices' ||
       (priceRange === 'Under ₹5,000' && p.price < 5000) ||
       (priceRange === '₹5,000 - ₹10,000' && p.price >= 5000 && p.price <= 10000) ||
@@ -1433,6 +1599,17 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div className="mb-6">
+          <label htmlFor="shop-search" className="sr-only">Search sarees</label>
+          <input
+            id="shop-search"
+            type="search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search by name, fabric, colour or occasion"
+            className="w-full rounded-full border border-border bg-white px-5 py-3 text-sm text-charcoal outline-none transition focus:border-champagne"
+          />
+        </div>
         <div className="relative flex flex-wrap items-center justify-between gap-4 mb-10">
           <div className="relative">
             <button onClick={() => setFilterOpen(open => !open)} aria-expanded={filterOpen} aria-label="Open saree filters"
@@ -1485,7 +1662,9 @@ function ShopPage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, fi
         <div className="relative">
           {filtered.length === 0 ? (
             <p className="py-10 text-center text-sm text-warm-gray">
-              {filter === 'ALL' ? 'No sarees found.' : `No sarees found in ${filter}.`}
+              {searchWords.length > 0
+                ? `No sarees match "${search.trim()}".`
+                : filter === 'ALL' ? 'No sarees found.' : `No sarees found in ${filter}.`}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4">
@@ -2005,13 +2184,17 @@ function CheckoutPage({
   cart,
   setCart,
   setLastOrderNumber,
+  onOrderPlaced,
   customerToken,
+  customerEmail,
 }: {
   setPage: (p: Page) => void
   cart: CartItem[]
   setCart: (c: CartItem[] | ((curr: CartItem[]) => CartItem[])) => void
   setLastOrderNumber: (orderNumber: string) => void
+  onOrderPlaced: (order: PlacedOrder, notice?: string) => void
   customerToken: string | null
+  customerEmail?: string
 }) {
   const [step, setStep] = useState(1)
   const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([])
@@ -2030,11 +2213,40 @@ function CheckoutPage({
   const [stepError, setStepError] = useState('')
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const placingOrderRef = useRef(false)
-  const [payMethod, setPayMethod] = useState('UPI')
-
   const storeSettings = useContext(StoreSettingsContext)
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
   const shipping = calculateShipping(subtotal, storeSettings)
+
+  // Coupon: previewed here, applied again by the backend when the order is placed.
+  const [couponInput, setCouponInput] = useState('')
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string, discount: number } | null>(null)
+  const [couponError, setCouponError] = useState('')
+  const [couponLoading, setCouponLoading] = useState(false)
+  const discount = appliedCoupon?.discount ?? 0
+  const orderTotal = Math.max(0, subtotal - discount) + shipping
+
+  const applyCouponCode = async () => {
+    const code = couponInput.trim()
+    if (!code) return
+    setCouponLoading(true)
+    setCouponError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/coupons/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ code, subtotal }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'This coupon code is not valid.')
+      setAppliedCoupon({ code: data.code, discount: Number(data.discount_amount) || 0 })
+      setCouponInput('')
+    } catch (error) {
+      setAppliedCoupon(null)
+      setCouponError(error instanceof Error ? error.message : 'This coupon code is not valid.')
+    } finally {
+      setCouponLoading(false)
+    }
+  }
 
   const update =(k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -2237,6 +2449,7 @@ function CheckoutPage({
           city,
           state,
           pin_code: pin,
+          ...(appliedCoupon ? { coupon_code: appliedCoupon.code } : {}),
           items: cart.map(item => ({
             product_id: item.id,
             product_name: item.name,
@@ -2257,6 +2470,8 @@ function CheckoutPage({
         return
       }
 
+      // The order exists and its stock is reserved, so the bag is emptied now,
+      // whatever happens in the payment popup.
       setCart([])
       try {
         localStorage.removeItem(CART_STORAGE_KEY)
@@ -2264,7 +2479,26 @@ function CheckoutPage({
         // ignore storage errors
       }
 
+      const placed: PlacedOrder = {
+        id: String(data.id),
+        order_number: data.order_number,
+        total_amount: String(data.total_amount),
+        payment_status: data.payment_status,
+      }
       setLastOrderNumber(data.order_number)
+
+      let notice: string | undefined
+      if (data.payment?.provider === 'razorpay') {
+        const result = await payWithRazorpay(data.payment as RazorpayPaymentStart, data.order_number, customerToken, {
+          name,
+          email: customerEmail,
+          contact: phone,
+        })
+        placed.payment_status = result.status === 'paid' ? 'Paid' : 'Pending'
+        notice = result.message
+      }
+
+      onOrderPlaced(placed, notice)
       setPage('order-success')
     } catch (error) {
       console.error('Error placing order:', error)
@@ -2516,10 +2750,41 @@ function CheckoutPage({
               ))}
             </div>
 
+            {/* Coupon */}
+            <div className="mb-4">
+              {appliedCoupon ? (
+                <div className="flex items-center justify-between rounded-2xl bg-green-50 px-4 py-3 text-sm text-green-800">
+                  <span>Coupon <strong>{appliedCoupon.code}</strong> applied</span>
+                  <button type="button" onClick={() => setAppliedCoupon(null)} className="text-xs underline underline-offset-4">Remove</button>
+                </div>
+              ) : (
+                <form
+                  className="flex gap-2"
+                  onSubmit={event => { event.preventDefault(); void applyCouponCode() }}
+                >
+                  <input
+                    value={couponInput}
+                    onChange={event => { setCouponInput(event.target.value.toUpperCase()); setCouponError('') }}
+                    placeholder="Coupon code"
+                    aria-label="Coupon code"
+                    maxLength={30}
+                    className="flex-1 rounded-full border border-border bg-white px-4 py-2.5 text-sm uppercase tracking-wider outline-none focus:border-champagne"
+                  />
+                  <button type="submit" disabled={couponLoading || !couponInput.trim()} className="rounded-full border border-charcoal px-5 py-2.5 text-xs uppercase tracking-widest text-charcoal disabled:opacity-50">
+                    {couponLoading ? 'Checking...' : 'Apply'}
+                  </button>
+                </form>
+              )}
+              {couponError && <p role="alert" className="mt-2 text-xs text-wine">{couponError}</p>}
+            </div>
+
             <div className="border-t border-border pt-4 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-warm-gray">Subtotal</span><span>₹{subtotal.toLocaleString('en-IN')}</span></div>
+              {discount > 0 && (
+                <div className="flex justify-between text-green-700"><span>Discount ({appliedCoupon?.code})</span><span>−₹{discount.toLocaleString('en-IN')}</span></div>
+              )}
               <div className="flex justify-between"><span className="text-warm-gray">Shipping</span><span>{shipping === 0 ? 'Free' : `₹${shipping}`}</span></div>
-              <div className="flex justify-between font-medium text-base pt-2 border-t border-border"><span>Total</span><span>₹{(subtotal + shipping).toLocaleString('en-IN')}</span></div>
+              <div className="flex justify-between font-medium text-base pt-2 border-t border-border"><span>Total</span><span>₹{orderTotal.toLocaleString('en-IN')}</span></div>
             </div>
 
             <div className="flex gap-3 mt-8">
@@ -2532,26 +2797,30 @@ function CheckoutPage({
         {step === 3 && (
           <div className="bg-white rounded-3xl border border-border p-6 sm:p-8">
             <h2 className="font-serif text-2xl text-charcoal mb-6">Payment</h2>
-            <div className="space-y-3 mb-8">
-              {['UPI', 'Credit / Debit Card', 'Net Banking', 'Wallets'].map(m => (
-                <label key={m} className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${payMethod === m ? 'border-charcoal bg-cream' : 'border-border hover:border-champagne'}`}>
-                  <input type="radio" checked={payMethod === m} onChange={() => setPayMethod(m)} className="accent-wine" />
-                  <span className="text-sm font-medium text-charcoal">{m}</span>
-                </label>
-              ))}
+            <div className="mb-6 flex justify-between rounded-2xl border border-border px-4 py-3 text-sm">
+              <span className="text-warm-gray">Amount to pay</span>
+              <span className="font-medium text-charcoal">₹{orderTotal.toLocaleString('en-IN')}</span>
             </div>
             <div className="bg-cream rounded-2xl p-4 mb-6 text-center">
               <p className="text-xs text-warm-gray">Online Payment Only · No Cash on Delivery</p>
-              <p className="mt-2 text-xs text-warm-gray">
-                No payment is taken on this page. Your order is placed with payment pending,
-                and we will contact you to complete payment by your chosen method.
-              </p>
+              {storeSettings.online_payment ? (
+                <p className="mt-2 text-xs text-warm-gray">
+                  You will pay securely through Razorpay: UPI, credit or debit card, net banking or wallets.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-warm-gray">
+                  No payment is taken on this page. Your order is placed with payment pending,
+                  and we will contact you to complete payment.
+                </p>
+              )}
             </div>
             <div className="flex gap-3">
               <button onClick={() => setStep(2)} disabled={isPlacingOrder} className="border border-border text-warm-gray px-6 py-3.5 rounded-full text-xs tracking-widest uppercase hover:border-charcoal hover:text-charcoal transition-colors disabled:opacity-50">Back</button>
               <button onClick={placeOrder} disabled={isPlacingOrder}
                 className="flex-1 bg-champagne text-charcoal py-3.5 rounded-full text-xs tracking-widest uppercase font-semibold hover:bg-charcoal hover:text-champagne transition-colors disabled:opacity-60">
-                {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
+                {isPlacingOrder
+                  ? (storeSettings.online_payment ? 'Opening Payment...' : 'Placing Order...')
+                  : (storeSettings.online_payment ? `Pay ₹${orderTotal.toLocaleString('en-IN')}` : 'Place Order')}
               </button>
             </div>
           </div>
@@ -2565,22 +2834,76 @@ function CheckoutPage({
 function OrderSuccessPage({
   setPage,
   orderNumber,
+  placedOrder,
+  notice,
+  customerToken,
+  customerEmail,
+  onPaid,
 }: {
   setPage: (p: Page) => void
   orderNumber: string
+  placedOrder: PlacedOrder | null
+  notice?: string
+  customerToken: string | null
+  customerEmail?: string
+  onPaid: () => void
 }) {
-  const orderNo = orderNumber
+  const orderNo = placedOrder?.order_number ?? orderNumber
+  const paymentStatus = placedOrder?.payment_status ?? 'Pending'
+  const storeSettings = useContext(StoreSettingsContext)
+  const [paying, setPaying] = useState(false)
+  const [payMessage, setPayMessage] = useState(notice ?? '')
+
+  useEffect(() => { setPayMessage(notice ?? '') }, [notice])
+
+  // Pay again after the Razorpay popup was closed or the payment failed.
+  const payNow = async () => {
+    if (!placedOrder || !customerToken) return
+    setPaying(true)
+    setPayMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/my-orders/${placedOrder.id}/pay`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${customerToken}` },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Online payment is unavailable right now.')
+      const result = await payWithRazorpay(data.payment, orderNo, customerToken, { email: customerEmail })
+      if (result.status === 'paid') onPaid()
+      else setPayMessage(result.message ?? '')
+    } catch (error) {
+      setPayMessage(error instanceof Error ? error.message : 'Online payment is unavailable right now.')
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const awaitingOnlinePayment = storeSettings.online_payment && paymentStatus !== 'Paid'
+
   return (
     <div className="min-h-screen bg-ivory flex flex-col items-center justify-center px-6 text-center">
       <div className="w-20 h-20 rounded-full bg-cream flex items-center justify-center mb-6 border border-champagne">
-        <span className="text-wine text-3xl">✓</span>
+        <span className="text-wine text-3xl">{awaitingOnlinePayment ? '!' : '✓'}</span>
       </div>
-      <p className="text-gold text-xs tracking-widest uppercase mb-3">Order Confirmed</p>
-      <h1 className="font-serif text-4xl sm:text-5xl text-charcoal mb-4">Thank you for your order.</h1>
-      <p className="text-warm-gray font-light mb-10 max-w-sm">Your saree is being prepared with care. You'll receive an update on WhatsApp and Email shortly.</p>
+      <p className="text-gold text-xs tracking-widest uppercase mb-3">{awaitingOnlinePayment ? 'Payment Pending' : 'Order Confirmed'}</p>
+      <h1 className="font-serif text-4xl sm:text-5xl text-charcoal mb-4">
+        {awaitingOnlinePayment ? 'Almost there.' : 'Thank you for your order.'}
+      </h1>
+      <p className="text-warm-gray font-light mb-6 max-w-sm">
+        {awaitingOnlinePayment
+          ? 'Your order is reserved for 30 minutes. Complete the payment to confirm it.'
+          : "Your saree is being prepared with care. We'll email you as your order progresses."}
+      </p>
+      {payMessage && <p role="status" className="mb-6 max-w-sm text-sm text-wine">{payMessage}</p>}
+      {awaitingOnlinePayment && placedOrder && (
+        <button onClick={() => { void payNow() }} disabled={paying}
+          className="mb-8 rounded-full bg-wine px-8 py-3 text-xs uppercase tracking-widest text-white disabled:opacity-60">
+          {paying ? 'Opening Payment...' : `Pay ₹${Number(placedOrder.total_amount).toLocaleString('en-IN')} Now`}
+        </button>
+      )}
       <div className="bg-white rounded-3xl border border-border p-6 mb-10 w-full max-w-sm text-sm">
         <div className="space-y-3">
-          {[['Order Number', orderNo], ['Order Date', new Date().toDateString()], ['Payment Status', 'Pending'], ['Est. Delivery', new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 864e5).toDateString()]].map(([k, v]) => (
+          {[['Order Number', orderNo], ['Order Date', new Date().toDateString()], ['Payment Status', paymentStatus], ['Est. Delivery', new Date(Date.now() + DELIVERY_TIMELINE_DAYS * 864e5).toDateString()]].map(([k, v]) => (
             <div key={k} className="flex justify-between">
               <span className="text-warm-gray">{k}</span>
               <span className="font-medium text-charcoal">{v}</span>
@@ -2643,6 +2966,28 @@ function OrderTrackingPage({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  // Tracking without an account: order number + the phone used on the order.
+  const [guestOrderNumber, setGuestOrderNumber] = useState(orderNumber)
+  const [guestPhone, setGuestPhone] = useState('')
+  const [guestLoading, setGuestLoading] = useState(false)
+  const [guestError, setGuestError] = useState('')
+
+  const lookUpGuestOrder = async () => {
+    setGuestLoading(true)
+    setGuestError('')
+    try {
+      const params = new URLSearchParams({ order_number: guestOrderNumber.trim(), phone: guestPhone })
+      const response = await fetch(`${API_BASE_URL}/api/track-order?${params}`, { headers: { Accept: 'application/json' } })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Unable to find that order.')
+      setOrder(data as CustomerOrder)
+    } catch (lookupError) {
+      setGuestError(lookupError instanceof Error ? lookupError.message : 'Unable to find that order.')
+    } finally {
+      setGuestLoading(false)
+    }
+  }
+
   useEffect(() => {
     let active = true
     setOrder(null)
@@ -2697,10 +3042,28 @@ function OrderTrackingPage({
 
         {loading ? (
           <p role="status" className="bg-white rounded-3xl border border-border p-8 text-sm text-warm-gray">Loading order details...</p>
-        ) : !customerSession ? (
+        ) : !customerSession && !order ? (
           <div className="bg-white rounded-3xl border border-border p-8">
-            <p className="text-sm text-warm-gray">Sign in to view your order tracking.</p>
-            <button onClick={() => setPage('account-sign-in')} className="mt-5 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors">Sign In</button>
+            <form className="space-y-4" onSubmit={event => { event.preventDefault(); void lookUpGuestOrder() }}>
+              <p className="text-sm text-charcoal">Enter your order number and the phone number used on the order.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="track-order-number" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Order Number</label>
+                  <input id="track-order-number" value={guestOrderNumber} onChange={event => setGuestOrderNumber(event.target.value)} placeholder="ORD-..." required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+                </div>
+                <div>
+                  <label htmlFor="track-order-phone" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Phone Number</label>
+                  <input id="track-order-phone" type="tel" value={guestPhone} onChange={event => setGuestPhone(event.target.value)} autoComplete="tel" required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+                </div>
+              </div>
+              {guestError && <p role="alert" className="text-sm text-red-700">{guestError}</p>}
+              <div className="flex flex-wrap items-center gap-4">
+                <button type="submit" disabled={guestLoading} className="bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase disabled:opacity-60">
+                  {guestLoading ? 'Looking Up...' : 'Track Order'}
+                </button>
+                <button type="button" onClick={() => setPage('account-sign-in')} className="text-xs text-warm-gray underline underline-offset-4 hover:text-charcoal">Or sign in to see all your orders</button>
+              </div>
+            </form>
           </div>
         ) : error ? (
           <div role="alert" className="bg-white rounded-3xl border border-border p-8">
@@ -2737,10 +3100,13 @@ function OrderTrackingPage({
                   <dt className="text-xs tracking-wider uppercase text-warm-gray">Expected Delivery Date</dt>
                   <dd className="mt-1 font-medium text-charcoal">{formatExpectedDeliveryDate(order)}</dd>
                 </div>
-                <div className="sm:col-span-2">
-                  <dt className="text-xs tracking-wider uppercase text-warm-gray">Shipping Address</dt>
-                  <dd className="mt-1 leading-relaxed text-charcoal">{order.customer_address}</dd>
-                </div>
+                {/* Guest tracking does not return the address. */}
+                {order.customer_address && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs tracking-wider uppercase text-warm-gray">Shipping Address</dt>
+                    <dd className="mt-1 leading-relaxed text-charcoal">{order.customer_address}</dd>
+                  </div>
+                )}
               </dl>
 
               <div className="border-t border-border mt-6 pt-6">
@@ -2820,6 +3186,117 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
   const [profileLoading, setProfileLoading] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const storeSettings = useContext(StoreSettingsContext)
+
+  // Change password (signed in)
+  const [passwordDraft, setPasswordDraft] = useState({ current: '', next: '', confirm: '' })
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const handlePasswordChange = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!customerSession) return
+    if (passwordDraft.next !== passwordDraft.confirm) {
+      setPasswordMessage({ type: 'error', text: 'The new passwords do not match.' })
+      return
+    }
+    setPasswordSaving(true)
+    setPasswordMessage(null)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/customer/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${customerSession.token}` },
+        body: JSON.stringify({ current_password: passwordDraft.current, password: passwordDraft.next }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Unable to change your password.')
+      setPasswordDraft({ current: '', next: '', confirm: '' })
+      setPasswordMessage({ type: 'success', text: data.message || 'Your password has been changed.' })
+    } catch (error) {
+      setPasswordMessage({ type: 'error', text: error instanceof Error ? error.message : 'Unable to change your password.' })
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
+
+  // Forgot password (signed out)
+  const [forgotOpen, setForgotOpen] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotSending, setForgotSending] = useState(false)
+  const [forgotMessage, setForgotMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const handleForgotPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setForgotSending(true)
+    setForgotMessage(null)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: forgotEmail }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Unable to send the reset link.')
+      setForgotMessage({ type: 'success', text: data.message || 'If an account exists for that email, a reset link has been sent.' })
+    } catch (error) {
+      setForgotMessage({ type: 'error', text: error instanceof Error ? error.message : 'Unable to send the reset link.' })
+    } finally {
+      setForgotSending(false)
+    }
+  }
+
+  // Cancel an order / pay for an unpaid one
+  const [orderActionId, setOrderActionId] = useState<number | null>(null)
+  const [orderActionMessage, setOrderActionMessage] = useState<Record<number, string>>({})
+
+  const replaceOrder = (updated: CustomerOrder) =>
+    setMyOrders(current => current.map(order => String(order.id) === String(updated.id) ? { ...order, ...updated } : order))
+
+  const cancelMyOrder = async (order: CustomerOrder) => {
+    if (!customerSession) return
+    const refundNote = order.payment_status === 'Paid' ? ' Your payment will be refunded to the original method.' : ''
+    if (!window.confirm(`Cancel order ${order.order_number}?${refundNote}`)) return
+    setOrderActionId(order.id)
+    setOrderActionMessage(current => ({ ...current, [order.id]: '' }))
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/my-orders/${order.id}/cancel`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${customerSession.token}` },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Unable to cancel this order.')
+      replaceOrder(data as CustomerOrder)
+    } catch (error) {
+      setOrderActionMessage(current => ({ ...current, [order.id]: error instanceof Error ? error.message : 'Unable to cancel this order.' }))
+    } finally {
+      setOrderActionId(null)
+    }
+  }
+
+  const payMyOrder = async (order: CustomerOrder) => {
+    if (!customerSession) return
+    setOrderActionId(order.id)
+    setOrderActionMessage(current => ({ ...current, [order.id]: '' }))
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/my-orders/${order.id}/pay`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${customerSession.token}` },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Online payment is unavailable right now.')
+      const result = await payWithRazorpay(data.payment, order.order_number, customerSession.token, {
+        name: order.customer_name,
+        email: customerSession.user.email,
+        contact: order.customer_phone,
+      })
+      if (result.status === 'paid') replaceOrder({ ...order, payment_status: 'Paid' })
+      else setOrderActionMessage(current => ({ ...current, [order.id]: result.message ?? '' }))
+    } catch (error) {
+      setOrderActionMessage(current => ({ ...current, [order.id]: error instanceof Error ? error.message : 'Online payment is unavailable right now.' }))
+    } finally {
+      setOrderActionId(null)
+    }
+  }
 
   const [addresses, setAddresses] = useState<CustomerAddress[]>([])
   const [addressesLoading, setAddressesLoading] = useState(false)
@@ -3306,6 +3783,37 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
                         {profileLoading ? 'Loading Profile...' : profileSaving ? 'Saving...' : 'Save Changes'}
                       </button>
                     </form>
+
+                    <h3 className="font-serif text-xl text-charcoal mt-10 mb-4">Change Password</h3>
+                    <form className="space-y-4" onSubmit={handlePasswordChange}>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        {([
+                          ['current', 'Current Password', 'current-password'],
+                          ['next', 'New Password', 'new-password'],
+                          ['confirm', 'Confirm New Password', 'new-password'],
+                        ] as const).map(([key, label, autoComplete]) => (
+                          <div key={key}>
+                            <label htmlFor={`password-${key}`} className="text-xs tracking-wider uppercase text-warm-gray block mb-1">{label}</label>
+                            <input
+                              id={`password-${key}`}
+                              type="password"
+                              value={passwordDraft[key]}
+                              onChange={event => setPasswordDraft(current => ({ ...current, [key]: event.target.value }))}
+                              autoComplete={autoComplete}
+                              minLength={key === 'current' ? undefined : 8}
+                              maxLength={72}
+                              required
+                              disabled={passwordSaving}
+                              className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent disabled:opacity-60"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      {passwordMessage && <p role={passwordMessage.type === 'error' ? 'alert' : 'status'} className={`text-sm ${passwordMessage.type === 'error' ? 'text-red-700' : 'text-green-700'}`}>{passwordMessage.text}</p>}
+                      <button type="submit" disabled={passwordSaving} className="bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase disabled:opacity-60">
+                        {passwordSaving ? 'Saving...' : 'Change Password'}
+                      </button>
+                    </form>
                   </>
                 ) : isSignIn ? (
                   <>
@@ -3320,10 +3828,29 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
                         <input id="customer-login-password" type="password" value={login.password} onChange={event => setLogin(current => ({ ...current, password: event.target.value }))} autoComplete="current-password" required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
                       </div>
                       {loginError && <p role="alert" className="text-sm text-red-700">{loginError}</p>}
-                      <button type="submit" disabled={loginLoading} className="mt-2 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors disabled:opacity-60">
-                        {loginLoading ? 'Signing In...' : 'Sign In'}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-4">
+                        <button type="submit" disabled={loginLoading} className="mt-2 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal transition-colors disabled:opacity-60">
+                          {loginLoading ? 'Signing In...' : 'Sign In'}
+                        </button>
+                        <button type="button" onClick={() => { setForgotOpen(open => !open); setForgotEmail(login.email); setForgotMessage(null) }} className="mt-2 text-xs text-warm-gray underline underline-offset-4 hover:text-charcoal">
+                          Forgot password?
+                        </button>
+                      </div>
                     </form>
+
+                    {forgotOpen && (
+                      <form className="mt-8 space-y-4 rounded-2xl border border-border p-5" onSubmit={handleForgotPassword}>
+                        <p className="text-sm text-charcoal">Enter your email and we'll send you a link to set a new password.</p>
+                        <div>
+                          <label htmlFor="forgot-email" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Email Address</label>
+                          <input id="forgot-email" type="email" value={forgotEmail} onChange={event => setForgotEmail(event.target.value)} autoComplete="email" required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+                        </div>
+                        {forgotMessage && <p role={forgotMessage.type === 'error' ? 'alert' : 'status'} className={`text-sm ${forgotMessage.type === 'error' ? 'text-red-700' : 'text-green-700'}`}>{forgotMessage.text}</p>}
+                        <button type="submit" disabled={forgotSending} className="border border-charcoal text-charcoal px-6 py-2.5 rounded-full text-xs tracking-widest uppercase disabled:opacity-60">
+                          {forgotSending ? 'Sending...' : 'Send Reset Link'}
+                        </button>
+                      </form>
+                    )}
                   </>
                 ) : (
                   <>
@@ -3403,15 +3930,31 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
                           <div>
                             <p className="text-xs tracking-wider uppercase text-warm-gray">Total</p>
                             <p className="mt-1 font-medium text-charcoal">₹{Number(order.total_amount).toLocaleString('en-IN')}</p>
+                            {Number(order.discount_amount) > 0 && (
+                              <p className="mt-0.5 text-xs text-green-700">Includes −₹{Number(order.discount_amount).toLocaleString('en-IN')} ({order.coupon_code})</p>
+                            )}
                           </div>
                           <div className="sm:col-span-2">
                             <p className="text-xs tracking-wider uppercase text-warm-gray">Shipping Address</p>
                             <p className="mt-1 leading-relaxed text-charcoal">{order.customer_address}</p>
                           </div>
                         </div>
-                        <button onClick={() => onTrackOrder(order.order_number)} className="mt-4 border border-charcoal text-charcoal px-6 py-2.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">
-                          Track Order
-                        </button>
+                        {orderActionMessage[order.id] && <p role="alert" className="mt-3 text-sm text-wine">{orderActionMessage[order.id]}</p>}
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <button onClick={() => onTrackOrder(order.order_number)} className="border border-charcoal text-charcoal px-6 py-2.5 rounded-full text-xs tracking-widest uppercase hover:bg-charcoal hover:text-champagne transition-all">
+                            Track Order
+                          </button>
+                          {storeSettings.online_payment && order.status !== 'Cancelled' && order.payment_status === 'Pending' && (
+                            <button onClick={() => { void payMyOrder(order) }} disabled={orderActionId !== null} className="bg-wine text-white px-6 py-2.5 rounded-full text-xs tracking-widest uppercase disabled:opacity-60">
+                              {orderActionId === order.id ? 'Opening...' : 'Pay Now'}
+                            </button>
+                          )}
+                          {order.can_cancel && (
+                            <button onClick={() => { void cancelMyOrder(order) }} disabled={orderActionId !== null} className="text-xs tracking-widest uppercase text-wine underline underline-offset-4 disabled:opacity-60">
+                              {orderActionId === order.id ? 'Cancelling...' : 'Cancel Order'}
+                            </button>
+                          )}
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -3743,6 +4286,82 @@ function AccountPage({ setPage, customerSession, onCustomerLoginSuccess, onCusto
   )
 }
 
+// The reset link's "?email=…&token=…" is read once when the page loads; the app
+// then rewrites the URL to "#reset-password", so the token does not linger in history.
+const INITIAL_HASH_QUERY = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+
+function ResetPasswordPage({ setPage }: { setPage: (p: Page) => void }) {
+  const [email] = useState(() => INITIAL_HASH_QUERY.get('email') ?? '')
+  const [token] = useState(() => INITIAL_HASH_QUERY.get('token') ?? '')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const linkMissing = !email || !token
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (password !== confirm) {
+      setMessage({ type: 'error', text: 'The passwords do not match.' })
+      return
+    }
+    setSaving(true)
+    setMessage(null)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email, token, password }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'Unable to reset your password.')
+      setMessage({ type: 'success', text: data.message || 'Your password has been reset. You can now sign in.' })
+      setPassword('')
+      setConfirm('')
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Unable to reset your password.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-ivory">
+      <div className="max-w-md mx-auto px-4 sm:px-6 py-16">
+        <h1 className="font-serif text-4xl text-charcoal mb-2">Set a New Password</h1>
+        {linkMissing ? (
+          <div className="mt-8 bg-white rounded-3xl border border-border p-8">
+            <p className="text-sm text-warm-gray">This reset link is incomplete. Request a new one from the sign-in page.</p>
+            <button onClick={() => setPage('account-sign-in')} className="mt-5 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase">Go to Sign In</button>
+          </div>
+        ) : message?.type === 'success' ? (
+          <div className="mt-8 bg-white rounded-3xl border border-border p-8">
+            <p role="status" className="text-sm text-green-700">{message.text}</p>
+            <button onClick={() => setPage('account-sign-in')} className="mt-5 bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase">Sign In</button>
+          </div>
+        ) : (
+          <form className="mt-8 space-y-4 bg-white rounded-3xl border border-border p-8" onSubmit={submit}>
+            <p className="text-sm text-warm-gray">For {email}</p>
+            <div>
+              <label htmlFor="reset-password" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">New Password</label>
+              <input id="reset-password" type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" minLength={8} maxLength={72} required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+            </div>
+            <div>
+              <label htmlFor="reset-password-confirm" className="text-xs tracking-wider uppercase text-warm-gray block mb-1.5">Confirm New Password</label>
+              <input id="reset-password-confirm" type="password" value={confirm} onChange={event => setConfirm(event.target.value)} autoComplete="new-password" minLength={8} maxLength={72} required className="w-full border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-champagne bg-transparent" />
+            </div>
+            {message && <p role="alert" className="text-sm text-red-700">{message.text}</p>}
+            <button type="submit" disabled={saving} className="bg-charcoal text-champagne px-8 py-3 rounded-full text-xs tracking-widest uppercase disabled:opacity-60">
+              {saving ? 'Saving...' : 'Set Password'}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function AboutPage({ setPage }: { setPage: (p: Page) => void }) {
   return (
     <div className="min-h-screen bg-ivory">
@@ -4055,7 +4674,7 @@ const [ordersLoading, setOrdersLoading] = useState(false)
   const [offersError, setOffersError] = useState('')
   const [offerDialog, setOfferDialog] = useState<'add' | 'edit' | 'delete' | null>(null)
   const [selectedOffer, setSelectedOffer] = useState<AdminOffer | null>(null)
-  const [offerForm, setOfferForm] = useState<OfferForm>({ title: '', type: 'Discount', value: '', description: '', status: 'Active' })
+  const [offerForm, setOfferForm] = useState<OfferForm>(EMPTY_OFFER_FORM)
   const [offerActionError, setOfferActionError] = useState('')
   const [offerActionLoading, setOfferActionLoading] = useState(false)
   const [storeSettings, setStoreSettings] = useState<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
@@ -4736,14 +5355,18 @@ imageFiles: [] as File[],
 
   const openAddOffer = () => {
     setSelectedOffer(null)
-    setOfferForm({ title: '', type: 'Discount', value: '', description: '', status: 'Active' })
+    setOfferForm(EMPTY_OFFER_FORM)
     setOfferActionError('')
     setOfferDialog('add')
   }
 
   const openEditOffer = (offer: AdminOffer) => {
     setSelectedOffer(offer)
-    setOfferForm({ title: offer.title, type: offer.type, value: offer.value, description: offer.description, status: offer.status })
+    setOfferForm({
+      title: offer.title, type: offer.type, value: offer.value, description: offer.description, status: offer.status,
+      code: offer.code ?? '', discount_type: offer.discount_type ?? 'percent',
+      discount_value: offer.discount_value ?? '', min_order_amount: offer.min_order_amount ?? '',
+    })
     setOfferActionError('')
     setOfferDialog('edit')
   }
@@ -6330,7 +6953,7 @@ const updateSaree = async () => {
                   ].map(([label, field]) => (
                     <label key={field} className="block">
                       <span className="mb-2 block text-[10px] tracking-[0.2em] uppercase text-warm-gray">{label}</span>
-                      <textarea rows={5} value={storeSettings[field as keyof StoreSettingsForm]} onChange={event => setStoreSettings(current => ({ ...current, [field]: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full resize-y rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
+                      <textarea rows={5} value={String(storeSettings[field as keyof StoreSettingsForm] ?? '')} onChange={event => setStoreSettings(current => ({ ...current, [field]: event.target.value }))} disabled={!adminSession || storeSettingsLoading} className="w-full resize-y rounded-2xl border border-border bg-white px-4 py-3 text-sm text-charcoal outline-none transition focus:border-champagne disabled:opacity-60" />
                     </label>
                   ))}
                 </div>
@@ -6551,6 +7174,31 @@ const updateSaree = async () => {
                     {(['Active', 'Scheduled', 'Paused'] as const).map(status => <option key={status}>{status}</option>)}
                   </select>
                 </label>
+                <fieldset className="rounded-2xl border border-border p-4">
+                  <legend className="px-1 text-[10px] tracking-[0.2em] uppercase text-warm-gray">Coupon code (optional)</legend>
+                  <p className="mb-3 text-xs text-warm-gray">Customers enter this code at checkout. Leave it empty for a banner-only offer. It works only while the offer is Active.</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-warm-gray">Code</span>
+                      <input value={offerForm.code} maxLength={30} placeholder="FESTIVE10" onChange={event => setOfferForm(current => ({ ...current, code: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '') }))} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm uppercase outline-none focus:border-champagne" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-warm-gray">Discount type</span>
+                      <select value={offerForm.discount_type} disabled={!offerForm.code} onChange={event => setOfferForm(current => ({ ...current, discount_type: event.target.value as 'percent' | 'flat' }))} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none focus:border-champagne disabled:opacity-50">
+                        <option value="percent">Percent off (%)</option>
+                        <option value="flat">Flat amount off (₹)</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-warm-gray">{offerForm.discount_type === 'percent' ? 'Percent (1–90)' : 'Amount (₹)'}</span>
+                      <input type="number" min="0" step="0.01" value={offerForm.discount_value} disabled={!offerForm.code} onChange={event => setOfferForm(current => ({ ...current, discount_value: event.target.value }))} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none focus:border-champagne disabled:opacity-50" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-warm-gray">Minimum order (₹, optional)</span>
+                      <input type="number" min="0" step="1" value={offerForm.min_order_amount} disabled={!offerForm.code} onChange={event => setOfferForm(current => ({ ...current, min_order_amount: event.target.value }))} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none focus:border-champagne disabled:opacity-50" />
+                    </label>
+                  </div>
+                </fieldset>
               </div>
             )}
 
@@ -6615,6 +7263,13 @@ const updateSaree = async () => {
                 <p className="mt-1 text-lg font-medium text-charcoal">
                   ₹{Number(selectedOrder.total_amount ?? selectedOrder.amount ?? 0).toLocaleString('en-IN')}
                 </p>
+                {selectedOrder.subtotal_amount != null && (
+                  <p className="mt-1 text-xs text-warm-gray">
+                    Items ₹{Number(selectedOrder.subtotal_amount).toLocaleString('en-IN')}
+                    {Number(selectedOrder.discount_amount) > 0 && ` − ₹${Number(selectedOrder.discount_amount).toLocaleString('en-IN')} (${selectedOrder.coupon_code})`}
+                    {` + shipping ₹${Number(selectedOrder.shipping_amount ?? 0).toLocaleString('en-IN')}`}
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">Payment</p>
@@ -7026,23 +7681,13 @@ export default function App() {
     }
   })
   const [lastOrderNumber, setLastOrderNumber] = useState('')
+  const [lastPlacedOrder, setLastPlacedOrder] = useState<PlacedOrder | null>(null)
+  const [lastOrderNotice, setLastOrderNotice] = useState<string | undefined>(undefined)
   const [wishlist, setWishlist] = useState<number[]>([])
   const [wishlistLoading, setWishlistLoading] = useState(true)
   const [wishlistToast, setWishlistToast] = useState<string | null>(null)
   const [storeSettings, setStoreSettings] = useState<StoreSettingsForm>(EMPTY_STORE_SETTINGS)
 
-  const [sessionId] = useState(() => {
-  const existing = localStorage.getItem('wishlist_session_id')
-
-  if (existing) {
-    return existing
-  }
-
-  const newId = crypto.randomUUID()
-  localStorage.setItem('wishlist_session_id', newId)
-
-  return newId
-})
 
   useEffect(() => {
     try {
@@ -7307,11 +7952,9 @@ export default function App() {
       return
     }
 
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
     const headers: Record<string, string> = {
       Authorization: `Bearer ${customerSession.token}`,
       Accept: 'application/json',
-      'X-CSRF-TOKEN': csrfToken,
     }
 
     try {
@@ -7365,8 +8008,8 @@ export default function App() {
   // Read "#page" or "#product/<id>" from the URL. The product id lets a refreshed
   // or shared product link open the right saree.
   const parseHash = (): { page: Page, productId: number | null } => {
-    const validPages: Page[] = ['home', 'shop', 'product', 'cart', 'wishlist', 'account', 'account-sign-in', 'checkout', 'order-success', 'order-tracking', 'about', 'contact', 'admin-login', 'admin-dashboard']
-    const [rawPage, rawId] = window.location.hash.slice(1).split('/')
+    const validPages: Page[] = ['home', 'shop', 'product', 'cart', 'wishlist', 'account', 'account-sign-in', 'checkout', 'order-success', 'order-tracking', 'about', 'contact', 'admin-login', 'admin-dashboard', 'reset-password']
+    const [rawPage, rawId] = window.location.hash.slice(1).split('?')[0].split('/')
     const requested = validPages.includes(rawPage as Page) ? rawPage as Page : 'home'
     const productId = requested === 'product' && /^\d+$/.test(rawId ?? '') ? Number(rawId) : null
     return { page: requested, productId }
@@ -7498,7 +8141,6 @@ useEffect(() => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/wishlist`, {
         headers: {
-          'X-Session-ID': sessionId,
           Authorization: `Bearer ${customerSession.token}`,
           Accept: 'application/json',
         },
@@ -7519,7 +8161,7 @@ useEffect(() => {
 
   void loadWishlist()
   return () => { active = false }
-}, [sessionId, customerSession?.token])
+}, [customerSession?.token])
 
 useEffect(() => {
   if (!customerSession && (page === 'wishlist' || page === 'checkout')) setPage(page)
@@ -7584,13 +8226,23 @@ useEffect(() => {
             cart={cart}
             setCart={setCart}
             setLastOrderNumber={setLastOrderNumber}
+            onOrderPlaced={(order, notice) => { setLastPlacedOrder(order); setLastOrderNotice(notice) }}
             customerToken={customerSession?.token ?? null}
+            customerEmail={customerSession?.user.email}
           />
         )}
         {page === 'order-success' && (
   <OrderSuccessPage
     setPage={setPage}
     orderNumber={lastOrderNumber}
+    placedOrder={lastPlacedOrder}
+    notice={lastOrderNotice}
+    customerToken={customerSession?.token ?? null}
+    customerEmail={customerSession?.user.email}
+    onPaid={() => {
+      setLastPlacedOrder(current => current ? { ...current, payment_status: 'Paid' } : current)
+      setLastOrderNotice(undefined)
+    }}
   />
 )}
         {page === 'order-tracking' && <OrderTrackingPage setPage={setPage} orderNumber={lastOrderNumber} customerSession={customerSession} />}
@@ -7606,6 +8258,7 @@ useEffect(() => {
           />
         )}
         {page === 'about' && <AboutPage setPage={setPage} />}
+        {page === 'reset-password' && <ResetPasswordPage setPage={setPage} />}
         {page === 'contact' && <ContactPage setPage={setPage} storeSettings={storeSettings} />}
         {page === 'admin-login' && <AdminLoginPage setPage={setPage} onLoginSuccess={handleAdminLoginSuccess} />}
         {page === 'admin-dashboard' && <AdminDashboardPage setPage={setPage} adminSession={adminSession} onLogout={logoutAdmin} globalStoreSettings={storeSettings} setGlobalStoreSettings={setStoreSettings} />}
