@@ -60,91 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   });
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. LOGO INTRO & FULL-SCREEN PRELOADER
-  // ─────────────────────────────────────────────────────────────────────────────
-  const initLogoIntro = () => {
-    const hasSeenIntro = sessionStorage.getItem('yaale_intro_played');
-    if (hasSeenIntro) {
-      return;
-    }
-
-    const preloader = document.createElement('div');
-    preloader.id = 'yaale-preloader';
-    preloader.innerHTML = `
-      <button class="yaale-preloader-skip" id="yaale-skip-intro" aria-label="Skip introduction">Skip &rarr;</button>
-      <div class="yaale-preloader-logo-wrap" id="yaale-preloader-logo-wrap">
-        <img src="/yaale-logo-transparent.png" alt="Yaale" class="yaale-preloader-logo" id="yaale-intro-logo" />
-      </div>
-    `;
-    document.body.prepend(preloader);
-
-    const logoWrap = document.getElementById('yaale-preloader-logo-wrap');
-    const skipBtn = document.getElementById('yaale-skip-intro');
-
-    let finished = false;
-    const completeIntro = () => {
-      if (finished) return;
-      finished = true;
-      sessionStorage.setItem('yaale_intro_played', 'true');
-      preloader.classList.add('fade-out');
-      setTimeout(() => {
-        if (preloader.parentNode) preloader.parentNode.removeChild(preloader);
-        ScrollTrigger.refresh();
-      }, 650);
-
-      revealHero();
-    };
-
-    if (skipBtn) {
-      skipBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        completeIntro();
-      });
-    }
-
-    gsap.set(logoWrap, { opacity: 0, scale: 0.85 });
-    gsap.to(logoWrap, {
-      opacity: 1,
-      scale: 1,
-      duration: 0.7,
-      ease: 'power2.out',
-      onComplete: () => {
-        setTimeout(() => {
-          if (finished) return;
-
-          const navLogoImg = document.querySelector('header img[src*="yaale-logo"]');
-          if (navLogoImg && logoWrap) {
-            const navRect = navLogoImg.getBoundingClientRect();
-            const preRect = logoWrap.getBoundingClientRect();
-
-            const targetScale = Math.max(0.3, navRect.width / preRect.width);
-            const targetX = (navRect.left + navRect.width / 2) - (preRect.left + preRect.width / 2);
-            const targetY = (navRect.top + navRect.height / 2) - (preRect.top + preRect.height / 2);
-
-            gsap.to(logoWrap, {
-              x: targetX,
-              y: targetY,
-              scale: targetScale,
-              duration: 0.95,
-              ease: 'power3.inOut',
-              onComplete: completeIntro,
-            });
-
-            gsap.to(preloader, {
-              backgroundColor: 'rgba(251, 250, 247, 0)',
-              duration: 0.7,
-              delay: 0.35,
-              ease: 'power2.out',
-            });
-          } else {
-            completeIntro();
-          }
-        }, 1000);
-      },
-    });
-  };
-
   const revealHero = () => {
     const heroH1 = document.querySelector('section h1');
     const heroP = document.querySelector('section h1 + p');
@@ -177,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  initLogoIntro();
+  revealHero();
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 3. NAVBAR SMART SCROLL (Hide on Down, Show on Up + Blurred Glass Bar)

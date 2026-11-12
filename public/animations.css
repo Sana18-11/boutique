@@ -16,73 +16,6 @@
    --text-on-dark: #FBFAF7
    ========================================================================== */
 
-/* ── 1. PRELOADER & LOGO INTRO ────────────────────────────────────────── */
-#yaale-preloader {
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-  background-color: var(--bg-main, #FBFAF7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  pointer-events: auto;
-  overflow: hidden;
-  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.6s ease;
-}
-
-#yaale-preloader.fade-out {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.yaale-preloader-logo-wrap {
-  position: relative;
-  width: 140px;
-  height: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  will-change: transform, opacity;
-}
-
-.yaale-preloader-logo {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  filter: drop-shadow(0 4px 12px rgba(43, 28, 26, 0.08));
-}
-
-.yaale-preloader-skip {
-  position: absolute;
-  top: 24px;
-  right: 28px;
-  padding: 8px 16px;
-  border-radius: 9999px;
-  border: 1px solid var(--line, #E3DCD6);
-  background: var(--bg-soft, #F3EEE8);
-  backdrop-filter: blur(8px);
-  color: var(--text-main, #2B1C1A);
-  font-size: 11px;
-  letter-spacing: 0.25em;
-  text-transform: uppercase;
-  font-family: 'Jost', system-ui, sans-serif;
-  cursor: pointer;
-  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  z-index: 10;
-}
-
-.yaale-preloader-skip:hover {
-  background: var(--maroon, #7A0C32);
-  color: var(--text-on-dark, #FBFAF7);
-  border-color: var(--maroon, #7A0C32);
-  transform: scale(1.04);
-}
-
-.yaale-preloader-skip:active {
-  transform: scale(0.96);
-}
 
 /* ── 2. SCROLL PROGRESS BAR ───────────────────────────────────────────── */
 #yaale-scroll-progress {
@@ -348,7 +281,6 @@ header.yaale-header.nav-glass {
 
 /* ── 14. PREFERS-REDUCED-MOTION OVERRIDES ──────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  #yaale-preloader,
   #yaale-scroll-progress,
   .yaale-floating-badge {
     display: none !important;

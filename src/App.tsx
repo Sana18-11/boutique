@@ -1262,37 +1262,42 @@ function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, on
             {
               title: 'Soft Silk Sarees',
               desc: 'Elegant traditional silk, woven for royalty.',
-              img: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format',
-              fallback: 'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=900&h=1200&fit=crop&auto=format',
+              img: heroBigImg,
+              fallback: semiSilkSareeImg,
               cat: 'Soft Silk',
             },
             {
               title: 'Cotton Sarees',
               desc: 'Light, breathable, and timelessly graceful.',
               img: brownCottonSareeImg,
-              fallback: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=900&h=1200&fit=crop&auto=format',
+              fallback: heroSmallImg,
               cat: 'Cotton',
             },
             {
               title: 'Semi Silk Sarees',
               desc: 'A refined blend of tradition and modernity.',
               img: semiSilkSareeImg,
-              fallback: 'https://images.unsplash.com/photo-1618489335755-e3aa2b16cd7a?w=900&h=1200&fit=crop&auto=format',
+              fallback: brownCottonSareeImg,
               cat: 'Semi Silk',
             },
           ].map(c => (
             <div key={c.cat} className="group relative w-[160px] sm:w-[220px] md:w-auto flex-shrink-0 snap-start cursor-pointer md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
-              <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full">
+              <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full bg-gradient-to-br from-[#E8C9CF] to-[#F4EAE2]">
                 <img
                   src={c.img}
                   alt={c.title}
+                  width={430}
+                  height={430}
+                  loading="lazy"
+                  decoding="async"
                   style={{ objectPosition: 'center 20%' }}
                   onError={(e) => {
                     const target = e.currentTarget
-                    if (target.src !== c.fallback) {
+                    if (target.dataset.fallbackTried !== 'true') {
+                      target.dataset.fallbackTried = 'true'
                       target.src = c.fallback
                     } else {
-                      target.style.opacity = '0'
+                      target.style.display = 'none'
                     }
                   }}
                   className="absolute inset-0 h-full w-full object-cover object-center scale-[1.05] group-hover:scale-[1.08] transition-transform duration-700"
