@@ -7498,23 +7498,17 @@ function Footer({ setPage }: { setPage: (p: Page) => void }) {
             </button>
           </div>
 
-          {/* Shop and Customer Care 2-col grid */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-6 max-[360px]:grid-cols-1">
-            <div>
-              <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Shop</p>
-              <div className="flex flex-col gap-2.5">
-                {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
-                  <button key={l} onClick={() => setPage('shop')} className="text-left text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light py-0.5">{l}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Customer Care</p>
-              <div className="flex flex-col gap-2.5">
-                {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
-                  <button key={l} onClick={() => setPage('contact')} className="text-left text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light py-0.5">{l}</button>
-                ))}
-              </div>
+          {/* Customer Care 2×2 grid on mobile, then Follow Us */}
+          <div>
+            <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Customer Care</p>
+            <div className="footer-care-grid grid grid-cols-2 gap-x-6 gap-y-1">
+              {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
+                <button
+                  key={l}
+                  onClick={() => setPage('contact')}
+                  className="text-left text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light py-2 min-h-[44px] min-w-0"
+                >{l}</button>
+              ))}
             </div>
           </div>
 
@@ -7528,8 +7522,8 @@ function Footer({ setPage }: { setPage: (p: Page) => void }) {
           </div>
         </div>
 
-        {/* Desktop footer layout (>= md - 100% untouched) */}
-        <div className="hidden md:grid md:grid-cols-4 gap-10">
+        {/* Desktop/tablet footer layout (>= md) — 3 balanced columns */}
+        <div className="hidden md:grid md:grid-cols-3 gap-10">
           <div>
             <img src={yaaleLogoJpeg} alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
             <p className="text-white/50 text-sm font-light leading-relaxed">Handpicked sarees from India's finest weavers. Crafted for moments that matter.</p>
@@ -7552,18 +7546,10 @@ function Footer({ setPage }: { setPage: (p: Page) => void }) {
             </button>
           </div>
           <div>
-            <p className="text-champagne text-xs tracking-widest uppercase mb-5">Shop</p>
-            <div className="space-y-3">
-              {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
-                <button key={l} onClick={() => setPage('shop')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
-              ))}
-            </div>
-          </div>
-          <div>
             <p className="text-champagne text-xs tracking-widest uppercase mb-5">Customer Care</p>
-            <div className="space-y-3">
+            <div className="flex flex-col gap-3">
               {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
-                <button key={l} onClick={() => setPage('contact')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
+                <button key={l} onClick={() => setPage('contact')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light text-left">{l}</button>
               ))}
             </div>
           </div>

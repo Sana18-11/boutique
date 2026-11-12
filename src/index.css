@@ -772,4 +772,26 @@ img, video { max-width: 100%; }
   }
 }
 
+/* ── Footer Customer Care 2×2 grid override (mobile only) ─────────────────
+   Global !important button rules may force display:block and strip the grid.
+   These overrides are scoped to the .footer-care-grid wrapper only.         */
+@media (max-width: 767px) {
+  .footer-care-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.25rem 1.5rem !important;
+  }
+  .footer-care-grid button {
+    display: flex !important;
+    align-items: center !important;
+    min-height: 44px !important;
+    width: 100% !important;
+    white-space: normal !important;
+    min-width: 0 !important;
+    text-align: left !important;
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+}
+
 
