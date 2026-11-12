@@ -189,17 +189,13 @@ header.yaale-header.nav-glass {
   }
 }
 
-/* ── 8. ENDLESS MARQUEE STRIP ─────────────────────────────────────────── */
+/* ── 8. ENDLESS MARQUEE STRIP (DISABLED) ──────────────────────────────── */
 .yaale-marquee-container {
-  overflow: hidden;
-  white-space: nowrap;
-  width: 100%;
-  padding: 18px 0;
-  background-color: var(--bg-dark, #2B1C1A);
-  border-top: 1px solid var(--copper, #BC7442);
-  border-bottom: 1px solid var(--copper, #BC7442);
-  position: relative;
-  user-select: none;
+  display: none !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 .yaale-marquee-track {

@@ -11,6 +11,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import crypto from "crypto";
+import sharp from "sharp";
 
 
 dotenv.config();
@@ -130,6 +131,31 @@ const removeStoredFile = (storedPath: string | null | undefined) => {
       // Already gone or locked: nothing else to do.
     });
   }
+};
+
+/**
+ * Process uploaded product images with sharp:
+ * - flatten transparency onto #F4EAE2
+ * - resize with fit: 'cover', position: 'attention' to 900x1200 (3:4)
+ * - save as WebP quality ~80
+ */
+const normalizeProductImage = async (filePath: string): Promise<string> => {
+  const parsed = path.parse(filePath);
+  const webpFileName = `${parsed.name}.webp`;
+  const webpFilePath = path.join(parsed.dir, webpFileName);
+
+  const inputBuffer = await fs.promises.readFile(filePath);
+  await sharp(inputBuffer)
+    .flatten({ background: "#F4EAE2" })
+    .resize(900, 1200, { fit: "cover", position: "attention" })
+    .webp({ quality: 80 })
+    .toFile(webpFilePath);
+
+  if (filePath !== webpFilePath && fs.existsSync(filePath)) {
+    await fs.promises.unlink(filePath).catch(() => {});
+  }
+
+  return `products/${webpFileName}`;
 };
 
 /** Delete files multer saved for this request if the request ends in an error response. */
@@ -273,6 +299,16 @@ const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const defaultAllowedOrigins = [
+  "https://boutique-qu1z.vercel.app",
+  "https://boutique.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:8443",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:8443",
+];
+
 const isProduction = process.env.NODE_ENV === "production";
 
 app.use(
@@ -281,7 +317,22 @@ app.use(
       // Requests without an Origin header (curl, server-to-server, same-origin GETs).
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowedOrigins.includes(origin) || defaultAllowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      try {
+        const parsed = new URL(origin);
+        if (
+          parsed.hostname.endsWith(".vercel.app") ||
+          parsed.hostname === "localhost" ||
+          parsed.hostname === "127.0.0.1"
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        // ignore invalid URL
+      }
 
       if (
         allowedOrigins.length === 0 &&
@@ -293,12 +344,18 @@ app.use(
 
       callback(null, false);
     },
+    credentials: true,
   })
 );
 app.use(express.json({ limit: "100kb" }));
 
 app.use(
   "/storage",
+  (req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
   express.static(path.join(process.cwd(), "public", "storage"))
 );
 
@@ -434,7 +491,7 @@ app.get("/api/health", async (req, res) => {
       message: "Database connection failed",
     });
   }
-});
+}); 
 
 
 app.post("/api/admin/login", authRateLimit, async (req, res) => {
@@ -2234,8 +2291,8 @@ app.post(
         
 
     const uploadedFiles = (req.files as Express.Multer.File[] | undefined) ?? [];
-    const uploadedImagePaths = uploadedFiles.map(
-      file => `products/${file.filename}`
+    const uploadedImagePaths = await Promise.all(
+      uploadedFiles.map(file => normalizeProductImage(file.path))
     );
 
    
@@ -2441,8 +2498,8 @@ app.put(
     const images = req.body.images;
 
         const uploadedFiles = (req.files as Express.Multer.File[] | undefined) ?? [];
-    const uploadedImagePaths = uploadedFiles.map(
-      file => `products/${file.filename}`
+    const uploadedImagePaths = await Promise.all(
+      uploadedFiles.map(file => normalizeProductImage(file.path))
     );
 
     if (name !== undefined && (typeof name !== "string" || !name.trim())) {

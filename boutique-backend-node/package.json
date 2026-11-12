@@ -29,7 +29,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.5.0",
     "pg": "^8.23.1",
-    "prisma": "^7.10.1"
+    "prisma": "^7.10.1",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

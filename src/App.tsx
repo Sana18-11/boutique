@@ -2,7 +2,10 @@ import { createContext, useContext, useState, useEffect, useRef, type FormEvent 
 import brownCottonSareeImg from './assets/brown-cotton-saree.webp'
 import semiSilkSareeImg from './assets/semi-silk-saree.webp'
 import yaaleLogoTransparent from './assets/yaale-logo-transparent.png'
+import yaaleLogoTrimmed from './assets/yaale-logo-trimmed.png'
 import yaaleLogoJpeg from './assets/yaale-logo.jpeg'
+import heroBigImg from './assets/hero-big.webp'
+import heroSmallImg from './assets/hero-small.webp'
 
 interface GsapMatchMedia {
   add: (query: string, callback: () => void) => void
@@ -41,8 +44,12 @@ const INSTAGRAM_URL = 'https://www.instagram.com/yaale_sarees?stkn=dXVoZHI2dDhob
 const DEFAULT_CONTACT_EMAIL = 'hello@yaale.in'
 const DEFAULT_CONTACT_PHONE = '+91 98765 43210'
 
-// Backend address. Set VITE_API_URL (e.g. in .env.production) for deployed builds.
-const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:5000').replace(/\/+$/, '')
+// Backend address. Falls back to production Render backend when deployed.
+const PROD_API_URL = 'https://boutique-oldj.onrender.com'
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? PROD_API_URL : 'http://localhost:5000')
+).replace(/\/+$/, '')
 
 // Shipping defaults; must match DEFAULT_SHIPPING_FEE / DEFAULT_FREE_SHIPPING_THRESHOLD in the backend.
 const DEFAULT_SHIPPING_FEE = 250
@@ -75,7 +82,16 @@ const productImageUrl = (image: unknown) => {
   if (typeof image !== 'string' || !image.trim()) return ''
 
   const path = image.trim()
-  if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:)/i.test(path)) return path
+  if (path.includes('brown-cotton-saree')) return brownCottonSareeImg
+  if (path.includes('semi-silk-saree')) return semiSilkSareeImg
+  if (path.includes('yaale-logo')) return yaaleLogoTransparent
+
+  if (/^(?:[a-z][a-z\d+.-]*:|\/\/|data:)/i.test(path)) {
+    if (path.includes('localhost:5000/storage/')) {
+      return path.replace(/http:\/\/localhost:5000\/storage\//, `${API_BASE_URL}/storage/`)
+    }
+    return path
+  }
 
   const storagePath = path.replace(/^\/+/, '').replace(/^storage\//i, '')
   return storagePath ? `${API_BASE_URL}/storage/${storagePath}` : ''
@@ -322,14 +338,6 @@ interface OfferForm {
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
-
-const HERO_IMAGES = [
-  'https://images.unsplash.com/photo-1771654104349-f6ec79a48205?w=1600&h=1000&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1600&h=1000&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1618489335755-e3aa2b16cd7a?w=1600&h=1000&fit=crop&auto=format',
-  'https://images.unsplash.com/photo-1597897569252-9df44c7de0db?w=1600&h=1000&fit=crop&auto=format',
-]
-
 interface ProductsStore {
   products: Product[]
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>
@@ -383,6 +391,17 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
     return () => window.removeEventListener('scroll', fn)
   }, [])
 
+  useEffect(() => {
+    if (menuOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [menuOpen])
+
   const navLinks: { label: string; href: Page }[] = [
     { label: 'Home', href: 'home' },
     { label: 'Shop', href: 'shop' },
@@ -392,104 +411,187 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
 
   return (
     <header className={`sticky top-0 z-50 transition-all duration-300 ${scrolled ? 'bg-[#E8C9CF]/95 backdrop-blur-md shadow-sm' : 'bg-[#E8C9CF]'} border-b border-border`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
-        {/* Logo */}
-        <button onClick={() => setPage('home')} className="flex items-center leading-none cursor-pointer" aria-label="Yaale home">
-          <img src={yaaleLogoTransparent} alt="Yaale, Soulful Weaves" className="h-[68px] w-[68px] object-contain" />
-        </button>
-
-        {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-8">
-          {navLinks.map(l => (
-            <button key={l.label} onClick={() => setPage(l.href)}
-              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 ${page === l.href ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}>
-              {l.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Icons */}
-        <div className="flex items-center gap-3">
-          <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative p-1 text-[#063737] hover:text-[#A25524] transition-colors" aria-label="Wishlist">
-            <HeartIcon />
-            {wishlistCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center">{wishlistCount}</span>}
-          </button>
-          <button onClick={() => setPage('cart')} className="relative p-1 text-[#063737] hover:text-[#A25524] transition-colors" aria-label="Cart">
-            <BagIcon />
-            {cartCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center">{cartCount}</span>}
-          </button>
-          <button onClick={() => setPage(customerSession ? 'account' : 'account-sign-in')} className="p-1 text-[#063737] hover:text-[#A25524] transition-colors hidden md:block" aria-label="Account">
-            <UserIcon />
-          </button>
-          <button className="md:hidden flex h-9 w-9 items-center justify-center rounded-full bg-[#f0e9dd] text-[#063737] transition-colors hover:bg-[#F4EAE2]" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-[1fr_auto_1fr] items-center min-h-[88px] py-2">
+        {/* Left cell: Hamburger menu on mobile, Desktop nav Home & Shop on desktop */}
+        <div className="flex items-center justify-start md:justify-end">
+          <button
+            className="md:hidden flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-[#f0e9dd] text-[#063737] transition-colors hover:bg-[#F4EAE2] cursor-pointer"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Menu"
+          >
             <span className="flex flex-col items-center gap-1.5">
               <span className="block h-0.5 w-4 rounded-full bg-current" />
               <span className="block h-0.5 w-4 rounded-full bg-current" />
               <span className="block h-0.5 w-4 rounded-full bg-current" />
             </span>
           </button>
+          <nav className="hidden md:flex items-center gap-8 pr-10">
+            <button
+              onClick={() => setPage('home')}
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 cursor-pointer ${page === 'home' ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}
+            >
+              Home
+            </button>
+            <button
+              onClick={() => setPage('shop')}
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 cursor-pointer ${page === 'shop' ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}
+            >
+              Shop
+            </button>
+          </nav>
+        </div>
+
+        {/* Center cell: Logo */}
+        <div className="flex items-center justify-center">
+          <button onClick={() => setPage('home')} className="flex items-center leading-none cursor-pointer" aria-label="Yaale home">
+            <img src={yaaleLogoTrimmed} alt="Yaale, Soulful Weaves" className="h-[clamp(34px,10vw,48px)] md:h-14 w-auto object-contain" />
+          </button>
+        </div>
+
+        {/* Right cell: About and Contact on desktop, 3 tightly-grouped icons on mobile & desktop */}
+        <div className="flex items-center justify-end md:justify-between">
+          <nav className="hidden md:flex items-center gap-8 pl-10">
+            <button
+              onClick={() => setPage('about')}
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 cursor-pointer ${page === 'about' ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}
+            >
+              About
+            </button>
+            <button
+              onClick={() => setPage('contact')}
+              className={`text-sm tracking-widest uppercase font-light transition-colors duration-200 cursor-pointer ${page === 'contact' ? 'text-[#063737]' : 'text-[#063737] hover:text-[#A25524]'}`}
+            >
+              Contact
+            </button>
+          </nav>
+
+          {/* Icons: Wishlist, Bag, Account - tightly grouped with gap-1 to gap-2, 44px tap targets */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#063737] hover:text-[#A25524] transition-colors cursor-pointer" aria-label="Wishlist">
+              <HeartIcon />
+              {wishlistCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center font-medium shadow-xs">{wishlistCount}</span>}
+            </button>
+            <button onClick={() => setPage('cart')} className="relative flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#063737] hover:text-[#A25524] transition-colors cursor-pointer" aria-label="Cart">
+              <BagIcon />
+              {cartCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center font-medium shadow-xs">{cartCount}</span>}
+            </button>
+            <button onClick={() => setPage(customerSession ? 'account' : 'account-sign-in')} className="relative flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#063737] hover:text-[#A25524] transition-colors cursor-pointer" aria-label="Account">
+              <UserIcon />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Mobile Drawer */}
+      {/* Mobile Drawer (slides in from right, w-[85vw] max-w-[360px] h-[100dvh], with bg-black/40 backdrop) */}
       {menuOpen && (
-        <div className="md:hidden fixed inset-0 z-[60] bg-cream overflow-y-auto">
-          <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-            <h2 className="font-serif text-4xl text-charcoal">Menu</h2>
-            <button onClick={() => setMenuOpen(false)} className="p-2 text-charcoal" aria-label="Close menu">
-              <XIcon />
-            </button>
-          </div>
+        <div className="md:hidden fixed inset-0 z-[60] flex justify-end">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity duration-300"
+            onClick={() => setMenuOpen(false)}
+            aria-hidden="true"
+          />
 
-          <div className="px-5 py-4">
-            {[
-              { label: 'Home', href: 'home' },
-              { label: 'New Arrivals', href: 'shop' },
-              { label: 'Shop All', href: 'shop' },
-              { label: 'Festive Edits', href: 'shop' },
-              { label: 'Best Sellers', href: 'shop' },
-              { label: 'Sale', href: 'shop' },
-            ].map((item, index) => (
-              <button
-                key={item.label}
-                onClick={() => { setPage(item.href as Page); setMenuOpen(false) }}
-                className={`flex w-full items-center justify-between border-b border-border py-5 text-left text-[15px] tracking-[0.18em] uppercase text-charcoal ${index === 0 ? 'pt-4' : ''}`}
-              >
-                <span>{item.label}</span>
-                {index >= 2 && <span className="text-lg text-warm-gray">›</span>}
-              </button>
-            ))}
+          {/* Side Drawer Panel */}
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation Menu"
+            className="relative z-10 w-[85vw] max-w-[360px] h-[100dvh] bg-cream shadow-2xl flex flex-col justify-between overflow-y-auto pb-[calc(2.5rem+env(safe-area-inset-bottom))]"
+          >
+            <div>
+              {/* Drawer Header: Title + X button aligned with px-[clamp(16px,6vw,24px)] */}
+              <div className="flex items-center justify-between px-[clamp(16px,6vw,24px)] pt-5 pb-4 border-b border-border">
+                <h2 className="font-serif text-3xl text-charcoal">Menu</h2>
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  className="min-h-[44px] min-w-[44px] -mr-2 flex items-center justify-center p-2 text-charcoal cursor-pointer"
+                  aria-label="Close menu"
+                >
+                  <XIcon />
+                </button>
+              </div>
 
-            <div className="mt-8 space-y-5 border-t border-border pt-6">
-              {customerSession ? (
-                <>
-                  <button onClick={() => { setPage('account'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
-                    <span>My Account</span>
+              {/* Navigation Menu Rows */}
+              <div className="px-[clamp(16px,6vw,24px)]">
+                {[
+                  { label: 'Home', href: 'home' },
+                  { label: 'New Arrivals', href: 'shop' },
+                  { label: 'Shop All', href: 'shop' },
+                  { label: 'Festive Edits', href: 'shop' },
+                  { label: 'Best Sellers', href: 'shop' },
+                  { label: 'Sale', href: 'shop' },
+                ].map(item => (
+                  <button
+                    key={item.label}
+                    onClick={() => { setPage(item.href as Page); setMenuOpen(false) }}
+                    className="mobile-menu-row flex h-14 w-full items-center justify-between border-b border-border text-left text-[14px] sm:text-[15px] tracking-[0.18em] uppercase text-charcoal cursor-pointer"
+                  >
+                    <span className="shrink-0">{item.label}</span>
+                    <span className="shrink-0 ml-auto flex items-center pr-1 text-warm-gray text-xl select-none" aria-hidden="true">›</span>
                   </button>
-                  <button onClick={() => { onCustomerLogout(); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-wine">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-wine"><UserIcon /></span>
-                    <span>Sign Out</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button onClick={() => { setPage('account-sign-in'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
-                    <span>Sign In</span>
-                  </button>
-                  <button onClick={() => { setPage('account'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal"><UserIcon /></span>
-                    <span>Create an Account</span>
-                  </button>
-                </>
-              )}
-              <button onClick={() => { setPage(customerSession ? 'wishlist' : 'account-sign-in'); setMenuOpen(false) }} className="flex items-center gap-3 text-[15px] text-charcoal">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-charcoal">
-                  <HeartIcon size={16} />
-                </span>
-                <span>My Wish List</span>
-              </button>
+                ))}
+
+                {/* Account Section: vertical list with divider above it */}
+                <div className="pt-2">
+                  <div className="flex flex-col py-1">
+                    {customerSession ? (
+                      <>
+                        <button
+                          onClick={() => { setPage('account'); setMenuOpen(false) }}
+                          className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-charcoal text-charcoal">
+                            <UserIcon />
+                          </span>
+                          <span className="font-serif text-[15px] sm:text-[16px] text-charcoal font-normal">My Account</span>
+                        </button>
+                        <button
+                          onClick={() => { onCustomerLogout(); setMenuOpen(false) }}
+                          className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-wine text-wine">
+                            <UserIcon />
+                          </span>
+                          <span className="font-serif text-[15px] sm:text-[16px] text-wine font-normal">Sign Out</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => { setPage('account-sign-in'); setMenuOpen(false) }}
+                          className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-charcoal text-charcoal">
+                            <UserIcon />
+                          </span>
+                          <span className="font-serif text-[15px] sm:text-[16px] text-charcoal font-normal">Sign In</span>
+                        </button>
+                        <button
+                          onClick={() => { setPage('account'); setMenuOpen(false) }}
+                          className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-charcoal text-charcoal">
+                            <UserIcon />
+                          </span>
+                          <span className="font-serif text-[15px] sm:text-[16px] text-charcoal font-normal">Create an Account</span>
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => { setPage(customerSession ? 'wishlist' : 'account-sign-in'); setMenuOpen(false) }}
+                      className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-charcoal text-charcoal">
+                        <HeartIcon size={16} />
+                      </span>
+                      <span className="font-serif text-[15px] sm:text-[16px] text-charcoal font-normal">
+                        My Wish List {wishlistCount > 0 ? `(${wishlistCount})` : ''}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -545,7 +647,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
       onMouseLeave={handleMouseLeave}
     >
       <div className={`relative overflow-hidden bg-[#f0e9dd] ${shopCard ? 'shop-product-frame rounded-[20px]' : 'rounded-3xl'}`} style={shopCard ? { aspectRatio: '3 / 4' } : { aspectRatio: '3 / 4' }} onClick={() => onClick(p)}>
-        <img ref={imageRef} src={imgSrc} alt={p.name} loading="lazy" onError={() => setImgSrc(yaaleLogoTransparent)}
+        <img ref={imageRef} src={imgSrc} alt={p.name} loading="lazy" onError={() => setImgSrc(brownCottonSareeImg)}
           className={`shop-product-image h-full w-full object-cover transition-transform duration-700 ease-out ${hovered ? 'scale-[1.06]' : 'scale-100'}`} />
         <div className="absolute inset-0 bg-charcoal/0 group-hover:bg-charcoal/10 transition-colors duration-300 rounded-[20px]" />
 
@@ -579,7 +681,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
         {isPurchasable(p) && (
           <div className={`absolute inset-x-0 bottom-0 p-3 transition-all duration-300 ${hovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
             <button onClick={e => { e.stopPropagation(); onAdd(p) }}
-              className="w-full bg-charcoal/90 backdrop-blur-sm text-champagne text-xs tracking-widest uppercase py-2.5 rounded-2xl hover:bg-charcoal transition-colors">
+              className="quick-add w-full bg-charcoal/90 backdrop-blur-sm text-champagne text-xs tracking-widest uppercase py-2.5 rounded-2xl hover:bg-charcoal transition-colors">
               Add to Bag
             </button>
           </div>
@@ -605,16 +707,16 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
         <div className="mt-1 flex items-center gap-2">
           {p.originalPrice && p.originalPrice > p.price ? (
             <>
-              <span className="text-xs text-warm-gray line-through">
+              <span className="text-xs text-[#75645D]/80 line-through">
                 ₹{p.originalPrice.toLocaleString('en-IN')}
               </span>
 
-              <span className="text-sm font-medium text-charcoal">
+              <span className="text-sm font-semibold text-charcoal">
                 ₹{p.price.toLocaleString('en-IN')}
               </span>
             </>
           ) : (
-            <span className="text-sm font-medium text-charcoal">
+            <span className="text-sm font-semibold text-charcoal">
               ₹{p.price.toLocaleString('en-IN')}
             </span>
           )}
@@ -626,19 +728,232 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
 
 
 // ── Pages ──────────────────────────────────────────────────────────────────
- function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, onCategorySelect }: { setPage: (p: Page) => void, setSelectedProduct: (p: Product) => void, onAdd: (p: Product) => void, onWishlist: (id: number) => void, wishlist: number[], onCategorySelect: (category: Exclude<ShopCategoryFilter, 'ALL'>) => void }) {
+const HERO_QUOTES = [
+  '“Every thread remembers the hands that wove it.”',
+  '“Slow cloth for a life well lived.”',
+  '“Some stories are woven, not written.”',
+  '“Draped in tradition, worn in your own way.”',
+]
+
+function HeroQuoteCard({ reducedMotion }: { reducedMotion: boolean }) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [quoteIndex, setQuoteIndex] = useState(0)
+  const [isFadingOut, setIsFadingOut] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
+  const [isHeroVisible, setIsHeroVisible] = useState(true)
+  const [isTabVisible, setIsTabVisible] = useState(true)
+  const [tilt, setTilt] = useState({ x: 0, y: 0 })
+  const isFirstMount = useRef(true)
+
+  // IntersectionObserver to observe if quote card is on screen
+  useEffect(() => {
+    if (!cardRef.current || reducedMotion) return
+    const el = cardRef.current
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (entry) {
+          setIsHeroVisible(entry.isIntersecting)
+        }
+      },
+      { threshold: 0.1 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [reducedMotion])
+
+  // Track tab visibility
+  useEffect(() => {
+    if (reducedMotion) return
+    const handleVisibility = () => {
+      setIsTabVisible(document.visibilityState === 'visible')
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [reducedMotion])
+
+  // Mouse tilt on desktop (pointer: fine, min-width: 768px)
+  useEffect(() => {
+    if (reducedMotion) return
+
+    const isDesktopPointer = () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(min-width: 768px) and (pointer: fine)').matches
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDesktopPointer() || !cardRef.current) return
+      const rect = cardRef.current.getBoundingClientRect()
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+      const distX = e.clientX - centerX
+      const distY = e.clientY - centerY
+
+      if (Math.abs(distX) < 450 && Math.abs(distY) < 450) {
+        const tiltY = Math.max(-4, Math.min(4, (distX / (rect.width * 1.5)) * 4))
+        const tiltX = Math.max(-4, Math.min(4, (-distY / (rect.height * 1.5)) * 4))
+        setTilt({ x: tiltX, y: tiltY })
+      } else {
+        setTilt({ x: 0, y: 0 })
+      }
+    }
+
+    const handleMouseLeave = () => {
+      setTilt({ x: 0, y: 0 })
+    }
+
+    window.addEventListener('mousemove', handleMouseMove, { passive: true })
+    document.addEventListener('mouseleave', handleMouseLeave)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseleave', handleMouseLeave)
+    }
+  }, [reducedMotion])
+
+  // Rotate quotes every 6 seconds when not paused
+  useEffect(() => {
+    if (reducedMotion) return
+
+    if (isHovered || isFocused || !isHeroVisible || !isTabVisible) {
+      return
+    }
+
+    const interval = setInterval(() => {
+      setIsFadingOut(true)
+      setTimeout(() => {
+        isFirstMount.current = false
+        setQuoteIndex(prev => (prev + 1) % HERO_QUOTES.length)
+        setIsFadingOut(false)
+      }, 400)
+    }, 6000)
+
+    return () => clearInterval(interval)
+  }, [reducedMotion, isHovered, isFocused, isHeroVisible, isTabVisible])
+
+  const activeQuote = HERO_QUOTES[quoteIndex]
+  const words = activeQuote.split(' ')
+
+  if (reducedMotion) {
+    return (
+      <div
+        ref={cardRef}
+        className="absolute max-md:top-[2%] max-md:left-0 max-md:w-[48%] max-md:max-w-[200px] max-md:p-[clamp(10px,2.5vw,16px)] md:left-[2%] md:sm:left-[5%] md:top-[8%] md:sm:top-[10%] md:max-w-[240px] md:px-5 md:py-4 z-10 rounded-2xl bg-[#FBF6F2] shadow-[0_12px_30px_rgba(6,55,55,0.12)]"
+      >
+        <p className="font-serif text-[clamp(13px,4vw,17px)] md:text-[20px] leading-snug text-[#063737]">
+          {HERO_QUOTES[0]}
+        </p>
+        <p className="mt-1.5 md:mt-2 text-[clamp(10px,2.8vw,12px)] md:text-[12px] text-[#75645D]">
+          Yaalé, soulful weaves
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={cardRef}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        setIsHovered(false)
+        setTilt({ x: 0, y: 0 })
+      }}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      tabIndex={0}
+      aria-label={`${activeQuote} Yaalé, soulful weaves`}
+      className="hero-quote-card absolute max-md:top-[2%] max-md:left-0 max-md:w-[48%] max-md:max-w-[200px] md:left-[2%] md:sm:left-[5%] md:top-[8%] md:sm:top-[10%] md:max-w-[240px] z-10 rounded-2xl outline-none"
+      style={{
+        transform: tilt.x || tilt.y
+          ? `perspective(800px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`
+          : 'perspective(800px) rotateX(0deg) rotateY(0deg)',
+        transition: isHovered
+          ? 'transform 0.15s ease-out'
+          : 'transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1)',
+      }}
+    >
+      {/* Floating drift wrapper */}
+      <div className="hero-quote-float w-full rounded-2xl bg-[#FBF6F2] max-md:p-[clamp(10px,2.5vw,16px)] md:px-5 md:py-4 shadow-[0_12px_30px_rgba(6,55,55,0.12)]">
+        {/* Responsive CSS Grid to reserve height of longest quote */}
+        <div className="grid grid-cols-1 grid-rows-1">
+          {/* Invisible height sizers */}
+          <div
+            className="invisible col-start-1 row-start-1 select-none pointer-events-none font-serif text-[clamp(13px,4vw,17px)] md:text-[20px] leading-snug"
+            aria-hidden="true"
+          >
+            {HERO_QUOTES[0]}
+            <p className="mt-1.5 md:mt-2 text-[clamp(10px,2.8vw,12px)] md:text-[12px]">
+              Yaalé, soulful weaves
+            </p>
+          </div>
+          <div
+            className="invisible col-start-1 row-start-1 select-none pointer-events-none font-serif text-[clamp(13px,4vw,17px)] md:text-[20px] leading-snug"
+            aria-hidden="true"
+          >
+            {HERO_QUOTES[3]}
+            <p className="mt-1.5 md:mt-2 text-[clamp(10px,2.8vw,12px)] md:text-[12px]">
+              Yaalé, soulful weaves
+            </p>
+          </div>
+
+          {/* Active quote container */}
+          <div
+            className={`col-start-1 row-start-1 transition-opacity duration-400 ease-out ${
+              isFadingOut ? 'opacity-0' : 'opacity-100'
+            }`}
+          >
+            <span className="sr-only">{activeQuote}</span>
+
+            {/* Word-by-word visual reveal */}
+            <p
+              className="font-serif text-[clamp(13px,4vw,17px)] md:text-[20px] leading-snug text-[#063737]"
+              aria-hidden="true"
+            >
+              {words.map((word, wIdx) => {
+                const staggerDelay = isFirstMount.current
+                  ? 0.45 + wIdx * 0.06
+                  : 0.05 + wIdx * 0.06
+                return (
+                  <span
+                    key={`${quoteIndex}-${wIdx}`}
+                    className={`hero-quote-word inline-block ${
+                      wIdx < words.length - 1 ? 'mr-[0.26em]' : ''
+                    }`}
+                    style={{
+                      animationDelay: `${staggerDelay}s`,
+                    }}
+                  >
+                    {word}
+                  </span>
+                )
+              })}
+            </p>
+
+            {/* Attribution */}
+            <p
+              key={`attr-${quoteIndex}`}
+              className="hero-quote-attribution mt-1.5 md:mt-2 text-[clamp(10px,2.8vw,12px)] md:text-[12px] text-[#75645D]"
+              style={{
+                animationDelay: `${
+                  (isFirstMount.current ? 0.45 : 0.05) + words.length * 0.06 + 0.1
+                }s`,
+              }}
+            >
+              Yaalé, soulful weaves
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, onCategorySelect }: { setPage: (p: Page) => void, setSelectedProduct: (p: Product) => void, onAdd: (p: Product) => void, onWishlist: (id: number) => void, wishlist: number[], onCategorySelect: (category: Exclude<ShopCategoryFilter, 'ALL'>) => void }) {
   const { products, videos, videosLoading, videosError } = useProductsStore()
   const videoRailRef = useRef<HTMLDivElement>(null)
   const homeRowRef = useRef<HTMLDivElement>(null)
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
   const scrollFrameRef = useRef<number | null>(null)
   const [activeVideo, setActiveVideo] = useState(0)
-  const [heroImage, setHeroImage] = useState(0)
-
-   useEffect(() => {
-     const timer = window.setInterval(() => setHeroImage(current => (current + 1) % HERO_IMAGES.length), 2000)
-     return () => window.clearInterval(timer)
-   }, [])
 
    const bestSellers = products.filter(p => p.badge === 'BESTSELLER' || p.id <= 4).slice(0, 4)
    const [reducedMotion, setReducedMotion] = useState(false)
@@ -734,42 +1049,61 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
    return (
     <div>
       {/* Hero */}
-      <section className="relative h-[90vh] min-h-[600px] overflow-hidden bg-[#F4EAE2]">
-        {HERO_IMAGES.map((image, index) => (
-           <img key={image} src={image} alt="Elegant saree editorial" className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroImage ? 'opacity-100' : 'opacity-0'}`} />
-        ))}
-         <div className="relative h-full flex flex-col justify-center max-w-7xl mx-auto px-6 sm:px-10">
-           <div className="max-w-2xl">
-             <h1 className="font-serif text-5xl sm:text-6xl lg:text-7xl text-[#302521] leading-[1.1] mb-6">
-               Timeless Drapes.<br /><em className="text-[#A25524] not-italic">Effortless Elegance.</em>
-             </h1>
-             <p className="text-[#302521] text-base sm:text-lg font-light leading-relaxed mb-10 max-w-lg">
-               Discover our curated collection of sarees, woven for moments that matter.
-             </p>
-             <div className="flex flex-wrap gap-4">
-               <button onClick={() => setPage('shop')}
-                 className="bg-[#063737] text-white px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-medium hover:bg-[#A25524] hover:text-white transition-colors duration-300">
-                 Shop Collection
-               </button>
-               <button onClick={() => setPage('shop')}
-                 className="border border-[#063737] bg-transparent text-[#063737] px-8 py-3.5 rounded-full text-xs tracking-[0.25em] uppercase font-light hover:border-[#A25524] hover:text-[#A25524] transition-colors duration-300">
-                 Explore Sarees
-               </button>
-             </div>
-           </div>
-         </div>
-         {/* Scroll hint */}
-         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-[#302521]/60">
-           <span className="text-[9px] tracking-[0.3em] uppercase">Scroll</span>
-           <div className="h-10 w-px bg-[#302521]/60" />
-         </div>
+      <section className="yaale-hero overflow-hidden bg-[#F4EAE2]">
+        <div className="mx-auto grid max-w-7xl items-center gap-8 md:gap-10 px-4 sm:px-6 md:px-10 py-10 sm:py-12 lg:grid-cols-2 lg:gap-14 lg:py-[70px]">
+          <div>
+            <h1 className="font-serif text-[clamp(2.15rem,8.5vw,2.75rem)] leading-[1.04] tracking-[-0.01em] text-[#063737] sm:text-6xl lg:text-[4.75rem]">
+              Handwoven sarees, made to be passed down.
+            </h1>
+            <p className="mb-7 sm:mb-9 mt-4 sm:mt-6 max-w-[460px] text-[clamp(15px,3.8vw,16px)] leading-relaxed text-[#75645D] sm:text-lg">
+              Kanjivaram silks, soft cottons and everyday handlooms, picked directly from weavers across South India.
+            </p>
+            <div className="max-md:flex max-md:flex-nowrap max-md:gap-3 md:flex md:flex-wrap md:gap-4 w-full md:w-auto">
+              <button onClick={() => setPage('shop')}
+                className="hero-btn-primary flex-1 min-w-0 md:flex-none md:w-auto min-h-[44px] flex items-center justify-center rounded-full bg-[#063737] max-md:px-3 max-md:py-3.5 max-md:text-[clamp(10px,3vw,12px)] max-md:tracking-[0.12em] md:px-8 md:py-4 md:text-[13px] font-medium uppercase md:tracking-[0.16em] text-white transition-colors duration-300 whitespace-nowrap text-center">
+                Shop sarees
+              </button>
+              <button onClick={() => setPage('about')}
+                className="hero-btn-secondary flex-1 min-w-0 md:flex-none md:w-auto min-h-[44px] flex items-center justify-center rounded-full border border-[#063737] bg-transparent max-md:px-3 max-md:py-3.5 max-md:text-[clamp(10px,3vw,12px)] max-md:tracking-[0.12em] md:px-8 md:py-4 md:text-[13px] font-medium uppercase md:tracking-[0.16em] text-[#063737] transition-colors duration-300 whitespace-nowrap text-center">
+                Our weavers
+              </button>
+            </div>
+          </div>
+
+          <div className="relative mx-auto max-md:h-auto max-md:aspect-[4/5] w-full max-w-[560px] md:h-[560px] lg:h-[600px]">
+            <div className="absolute right-0 top-0 h-[93%] w-[66%] rounded-b-[18px] rounded-t-full overflow-hidden">
+              <img
+                src={heroBigImg}
+                alt="Woman wearing a red Kanjivaram silk saree with gold zari"
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+                width={370}
+                height={560}
+                className="h-full w-full object-cover object-[50%_15%]"
+              />
+            </div>
+            <div className="absolute bottom-0 left-0 h-[50%] w-[41%] rounded-[18px] border-4 sm:border-8 border-[#F4EAE2] bg-[#F4EAE2] overflow-hidden">
+              <img
+                src={heroSmallImg}
+                alt="Woman wearing a dark cotton saree with a red border"
+                loading="eager"
+                decoding="async"
+                width={230}
+                height={300}
+                className="h-full w-full object-cover object-[50%_25%]"
+              />
+            </div>
+            <HeroQuoteCard reducedMotion={reducedMotion} />
+          </div>
+        </div>
       </section>
 
       {/* Category Cards */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        <div className="text-center mb-14">
+      <section className="py-14 sm:py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="text-center mb-10 sm:mb-14">
           <p className="text-gold text-xs tracking-[0.35em] uppercase mb-3">Collections</p>
-          <h2 className="font-serif text-4xl sm:text-5xl text-charcoal">Shop by Category</h2>
+          <h2 className="font-serif text-3xl sm:text-4xl md:text-5xl text-charcoal">Shop by Category</h2>
         </div>
         <div className="flex gap-3 overflow-x-auto px-1 pb-4 snap-x snap-mandatory sm:gap-6 md:grid md:grid-cols-3 md:overflow-visible md:px-0 md:pb-0">
           {[
@@ -795,7 +1129,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
               cat: 'Semi Silk',
             },
           ].map(c => (
-            <div key={c.cat} className="group relative w-[172px] flex-shrink-0 snap-start cursor-pointer sm:w-[230px] md:w-auto md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
+            <div key={c.cat} className="group relative w-[160px] sm:w-[220px] md:w-auto flex-shrink-0 snap-start cursor-pointer md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
               <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full">
                 <img
                   src={c.img}
@@ -805,13 +1139,15 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
                     const target = e.currentTarget
                     if (target.src !== c.fallback) {
                       target.src = c.fallback
+                    } else {
+                      target.style.opacity = '0'
                     }
                   }}
                   className="absolute inset-0 h-full w-full object-cover object-center scale-[1.05] group-hover:scale-[1.08] transition-transform duration-700"
                 />
-                <div className="absolute inset-0 rounded-full bg-gradient-to-t from-charcoal/90 via-charcoal/15 to-transparent" />
-                <div className="absolute inset-x-0 bottom-0 p-3 text-center sm:p-5 md:p-7">
-                  <h3 className="font-serif text-lg text-white sm:text-2xl">{c.title}</h3>
+                <div className="absolute inset-0 rounded-full bg-gradient-to-t from-charcoal/90 via-charcoal/15 to-transparent pointer-events-none" />
+                <div className="absolute inset-x-0 bottom-0 p-3 text-center sm:p-5 md:p-7 pointer-events-none">
+                  <h3 className="font-serif text-sm sm:text-lg md:text-2xl text-white tracking-wide">{c.title}</h3>
                 </div>
               </div>
             </div>
@@ -887,7 +1223,7 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
                   muted
                   loop
                   autoPlay
-                  preload="auto"
+                  preload="metadata"
                   playsInline
                   className="h-full w-full object-cover"
                 />
@@ -897,12 +1233,35 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
             ))}
           </div>
           {videos.length > 0 && !videosLoading && !videosError && (
-            <div className="relative mt-1 flex items-center justify-center gap-4">
-              <button onClick={() => goToVideo(activeVideo - 1)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-charcoal shadow-sm" aria-label="Previous video">&#8592;</button>
-              <div className="flex items-center gap-1.5">
-                {videos.map((video, index) => <button key={video.id} onClick={() => goToVideo(index)} className={`h-11 w-2 rounded-full transition-all sm:h-2 sm:w-2 sm:rounded-full ${index === activeVideo ? 'bg-charcoal' : 'bg-[#cfc5bd]'}`} aria-label={`Go to video ${index + 1}`} />)}
+            <div className="relative mt-4 mb-6 md:mt-1 md:mb-0 flex items-center justify-center gap-3 md:gap-4">
+              <button
+                onClick={() => goToVideo(activeVideo - 1)}
+                className="flex h-10 w-10 md:h-9 md:w-9 min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-white text-charcoal shadow-sm transition-transform active:scale-95 cursor-pointer"
+                aria-label="Previous video"
+              >
+                &#8592;
+              </button>
+              <div className="flex items-center gap-2 md:gap-1.5">
+                {videos.map((video, index) => (
+                  <button
+                    key={video.id}
+                    onClick={() => goToVideo(index)}
+                    className={`video-indicator-dot cursor-pointer transition-all duration-300 rounded-full ${
+                      index === activeVideo
+                        ? 'bg-[#063737] w-[22px] h-[10px] md:h-2 md:w-2 md:bg-charcoal'
+                        : 'bg-[#cfc5bd] w-[10px] h-[10px] md:h-2 md:w-2'
+                    }`}
+                    aria-label={`Go to video ${index + 1}`}
+                  />
+                ))}
               </div>
-              <button onClick={() => goToVideo(activeVideo + 1)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-charcoal shadow-sm" aria-label="Next video">&#8594;</button>
+              <button
+                onClick={() => goToVideo(activeVideo + 1)}
+                className="flex h-10 w-10 md:h-9 md:w-9 min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-white text-charcoal shadow-sm transition-transform active:scale-95 cursor-pointer"
+                aria-label="Next video"
+              >
+                &#8594;
+              </button>
             </div>
           )}
         </div>
@@ -974,17 +1333,17 @@ function ProductCard({ p, onAdd, onWishlist, wishlist, onClick, shopCard = false
       </section>
 
       {/* Testimonials / Brand strip */}
-      <section className="bg-charcoal py-16 px-6">
+      <section className="bg-charcoal py-10 md:py-16 px-3 sm:px-6">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-10 text-center">
+          <div className="max-md:grid max-md:grid-cols-3 max-md:gap-2 sm:grid sm:grid-cols-3 sm:gap-10 text-center">
             {[
               { label: '2000+', sub: 'Handpicked Sarees' },
               { label: '15,000+', sub: 'Happy Customers' },
               { label: 'Pan India', sub: 'Delivery' },
             ].map(s => (
-              <div key={s.label}>
-                <p className="font-serif text-4xl text-champagne mb-2">{s.label}</p>
-                <p className="text-white/50 text-xs tracking-widest uppercase font-light">{s.sub}</p>
+              <div key={s.label} className="px-1 sm:px-2">
+                <p className="font-serif text-[clamp(18px,6vw,26px)] md:text-4xl text-champagne mb-1 md:mb-2">{s.label}</p>
+                <p className="text-white/50 text-[clamp(9px,2.6vw,11px)] md:text-xs tracking-[0.1em] md:tracking-widest uppercase font-light px-1 sm:px-2 leading-tight break-words">{s.sub}</p>
               </div>
             ))}
           </div>
@@ -1316,60 +1675,121 @@ const inWish = wishlist.includes(p.id)
               ))}
             </div>
 
-            {/* Qty + Heart */}
-            <div className="flex items-center gap-4 mb-5">
-              <div className="flex items-center rounded-full overflow-hidden" style={{ border: '1px solid var(--line)' }}>
-                <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>&#8722;</button>
-                <span className="px-3 text-sm font-medium" style={{ color: 'var(--text-main)' }}>{qty}</span>
-                <button onClick={() => setQty(q => Math.min(maxQty, q + 1))} disabled={qty >= maxQty} aria-label="Increase quantity" className="px-4 py-2.5 text-lg transition-colors disabled:opacity-40" style={{ color: 'var(--text-muted)' }}>+</button>
-              </div>
-              {/* Heart icon — no circle */}
-              <button
-                type="button"
-                className="wishlist-btn"
-                data-product-id={String(p.id)}
-                data-active={String(inWish)}
-                onClick={e => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setHeartPop(true)
-                  setTimeout(() => setHeartPop(false), 350)
-                  onWishlist(p.id)
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: '4px',
-                  cursor: 'pointer',
-                  transform: heartPop ? 'scale(1.35)' : 'scale(1)',
-                  transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1)',
-                }}
-                aria-label={inWish ? 'Remove from wishlist' : 'Add to wishlist'}
-              >
-                <svg width="26" height="26" viewBox="0 0 24 24"
-                  fill={inWish ? '#7A0C32' : 'none'}
-                  stroke="#7A0C32"
-                  strokeWidth="1.8"
+            {/* Desktop: Qty + Heart then CTA Buttons (>= md - completely untouched) */}
+            <div className="hidden md:block">
+              <div className="flex items-center gap-4 mb-5">
+                <div className="flex items-center rounded-full overflow-hidden" style={{ border: '1px solid var(--line)' }}>
+                  <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-4 py-2.5 text-lg transition-colors" style={{ color: 'var(--text-muted)' }}>&#8722;</button>
+                  <span className="px-3 text-sm font-medium" style={{ color: 'var(--text-main)' }}>{qty}</span>
+                  <button onClick={() => setQty(q => Math.min(maxQty, q + 1))} disabled={qty >= maxQty} aria-label="Increase quantity" className="px-4 py-2.5 text-lg transition-colors disabled:opacity-40" style={{ color: 'var(--text-muted)' }}>+</button>
+                </div>
+                {/* Heart icon — no circle on desktop */}
+                <button
+                  type="button"
+                  className="wishlist-btn"
+                  data-product-id={String(p.id)}
+                  data-active={String(inWish)}
+                  onClick={e => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setHeartPop(true)
+                    setTimeout(() => setHeartPop(false), 350)
+                    onWishlist(p.id)
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '4px',
+                    cursor: 'pointer',
+                    transform: heartPop ? 'scale(1.35)' : 'scale(1)',
+                    transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                  }}
+                  aria-label={inWish ? 'Remove from wishlist' : 'Add to wishlist'}
                 >
-                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                </svg>
-              </button>
+                  <svg width="26" height="26" viewBox="0 0 24 24"
+                    fill={inWish ? '#7A0C32' : 'none'}
+                    stroke="#7A0C32"
+                    strokeWidth="1.8"
+                  >
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex gap-3 mb-6">
+                <button
+                  onClick={() => { onAdd(p, qty); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
+                  disabled={!isPurchasable(p)}
+                  className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ height: '52px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
+                >
+                  {!isPurchasable(p) ? 'Out of Stock' : addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
+                </button>
+                <button
+                  onClick={() => { onAdd(p, qty); setPage('checkout') }}
+                  disabled={!isPurchasable(p)}
+                  className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ height: '52px', backgroundColor: 'var(--maroon)', color: 'var(--text-on-dark)' }}
+                >
+                  Buy Now
+                </button>
+              </div>
             </div>
 
-            {/* CTA Buttons */}
-            <div className="flex gap-3 mb-6">
-              <button
-                onClick={() => { onAdd(p, qty); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
-                disabled={!isPurchasable(p)}
-                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ height: '52px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
-              >
-                {!isPurchasable(p) ? 'Out of Stock' : addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
-              </button>
+            {/* Mobile: Fluid layout (< md) */}
+            <div className="md:hidden flex flex-col gap-3.5 mb-6">
+              {/* Quantity selector */}
+              <div className="flex items-center">
+                <div className="flex items-center rounded-full overflow-hidden" style={{ border: '1px solid var(--line)' }}>
+                  <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-4 py-2 min-h-[44px] min-w-[44px] text-lg flex items-center justify-center transition-colors" style={{ color: 'var(--text-muted)' }}>&#8722;</button>
+                  <span className="px-3 text-sm font-medium" style={{ color: 'var(--text-main)' }}>{qty}</span>
+                  <button onClick={() => setQty(q => Math.min(maxQty, q + 1))} disabled={qty >= maxQty} aria-label="Increase quantity" className="px-4 py-2 min-h-[44px] min-w-[44px] text-lg flex items-center justify-center transition-colors disabled:opacity-40" style={{ color: 'var(--text-muted)' }}>+</button>
+                </div>
+              </div>
+
+              {/* Heart (fixed 48px round) + Add to Bag (flex-1 min-w-0) */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="wishlist-btn h-12 w-12 shrink-0 rounded-full flex items-center justify-center border border-[#EAD6D5] bg-[#FBF6F2] transition-colors"
+                  data-product-id={String(p.id)}
+                  data-active={String(inWish)}
+                  onClick={e => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setHeartPop(true)
+                    setTimeout(() => setHeartPop(false), 350)
+                    onWishlist(p.id)
+                  }}
+                  style={{
+                    transform: heartPop ? 'scale(1.2)' : 'scale(1)',
+                    transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                  }}
+                  aria-label={inWish ? 'Remove from wishlist' : 'Add to wishlist'}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24"
+                    fill={inWish ? '#7A0C32' : 'none'}
+                    stroke="#7A0C32"
+                    strokeWidth="1.8"
+                  >
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => { onAdd(p, qty); setAddedToBag(true); setTimeout(() => setAddedToBag(false), 2000) }}
+                  disabled={!isPurchasable(p)}
+                  className="flex-1 min-w-0 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 font-medium"
+                  style={{ height: '52px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-on-dark)' }}
+                >
+                  {!isPurchasable(p) ? 'Out of Stock' : addedToBag ? 'Added to Bag \u2713' : 'Add to Bag'}
+                </button>
+              </div>
+
+              {/* Buy Now (full-width row under it) */}
               <button
                 onClick={() => { onAdd(p, qty); setPage('checkout') }}
                 disabled={!isPurchasable(p)}
-                className="flex-1 text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full text-xs tracking-widest uppercase rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 font-medium"
                 style={{ height: '52px', backgroundColor: 'var(--maroon)', color: 'var(--text-on-dark)' }}
               >
                 Buy Now
@@ -1477,21 +1897,21 @@ function CartPage({ cart, setCart, setPage }: { cart: CartItem[], setCart: React
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-4">
             {cart.map(item => (
-              <div key={item.id} className="bg-white rounded-3xl p-5 flex gap-5 border border-border">
-                <div className="w-24 h-32 rounded-2xl overflow-hidden flex-shrink-0 bg-[#f0e9dd]">
+              <div key={item.id} className="bg-white rounded-3xl p-3.5 sm:p-5 flex gap-3.5 sm:gap-5 border border-border">
+                <div className="w-20 sm:w-24 h-28 sm:h-32 rounded-2xl overflow-hidden flex-shrink-0 bg-[#f0e9dd]">
                   <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gold tracking-widest uppercase">{item.category}</p>
-                  <h3 className="font-serif text-lg text-charcoal mt-0.5">{item.name}</h3>
+                  <p className="text-xs text-gold tracking-widest uppercase truncate">{item.category}</p>
+                  <h3 className="font-serif text-base sm:text-lg text-charcoal mt-0.5 break-words">{item.name}</h3>
                   <p className="text-warm-gray text-sm mt-1">₹{item.price.toLocaleString('en-IN')}</p>
-                  <div className="flex items-center gap-3 mt-3">
+                  <div className="flex flex-wrap items-center gap-3 mt-3">
                     <div className="flex items-center border border-border rounded-full">
-                      <button onClick={() => updateQty(item.id, item.qty - 1)} className="px-3 py-1 text-warm-gray hover:text-charcoal">−</button>
+                      <button onClick={() => updateQty(item.id, item.qty - 1)} className="px-3 py-1 min-h-[36px] min-w-[36px] flex items-center justify-center text-warm-gray hover:text-charcoal">−</button>
                       <span className="px-2 text-sm font-medium">{item.qty}</span>
-                      <button onClick={() => updateQty(item.id, item.qty + 1)} disabled={item.qty >= stockFor(item)} aria-label="Increase quantity" className="px-3 py-1 text-warm-gray hover:text-charcoal disabled:opacity-40">+</button>
+                      <button onClick={() => updateQty(item.id, item.qty + 1)} disabled={item.qty >= stockFor(item)} aria-label="Increase quantity" className="px-3 py-1 min-h-[36px] min-w-[36px] flex items-center justify-center text-warm-gray hover:text-charcoal disabled:opacity-40">+</button>
                     </div>
-                    <button onClick={() => updateQty(item.id, 0)} className="text-xs text-warm-gray hover:text-wine tracking-wider uppercase ml-auto">Remove</button>
+                    <button onClick={() => updateQty(item.id, 0)} className="text-xs text-warm-gray hover:text-wine tracking-wider uppercase py-1.5 transition-colors">Remove</button>
                   </div>
                 </div>
               </div>
@@ -1558,8 +1978,8 @@ function WishlistPage({
   return (
     <div className="min-h-screen bg-ivory">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="font-serif text-4xl text-charcoal mb-10">Wishlist <span className="text-gold text-2xl font-light">({items.length})</span></h1>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+        <h1 className="font-serif text-3xl sm:text-4xl text-charcoal mb-8 sm:mb-10">Wishlist <span className="text-gold text-2xl font-light">({items.length})</span></h1>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
           {items.map(p => (
             <ProductCard
               key={p.id}
@@ -3656,6 +4076,9 @@ const [ordersLoading, setOrdersLoading] = useState(false)
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' })
   const [categoryActionError, setCategoryActionError] = useState('')
   const [categoryActionLoading, setCategoryActionLoading] = useState(false)
+  const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<Product | null>(null)
+  const [deleteInProgress, setDeleteInProgress] = useState(false)
+  const [deleteActionError, setDeleteActionError] = useState('')
   const [dashboardStats, setDashboardStats] = useState<AdminDashboardStats | null>(null)
   const [dashboardStatsLoading, setDashboardStatsLoading] = useState(true)
   const [dashboardStatsError, setDashboardStatsError] = useState('')
@@ -3719,6 +4142,20 @@ const [ordersLoading, setOrdersLoading] = useState(false)
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [categoryDialog, categoryActionLoading])
+
+  useEffect(() => {
+    if (!deleteConfirmProduct || deleteInProgress) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDeleteConfirmProduct(null)
+        setDeleteActionError('')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [deleteConfirmProduct, deleteInProgress])
 
 useEffect(() => {
     if (!adminSession) {
@@ -3840,6 +4277,8 @@ imageFiles: [] as File[],
   const [deletingVideoId, setDeletingVideoId] = useState<number | null>(null)
   const videoInputRef = useRef<HTMLInputElement>(null)
   const sidebarItems = ['Dashboard', 'Sarees', 'Categories', 'Inventory', 'Orders', 'Customers', 'Offers', 'Settings', 'Inbox']
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
   const totalSalesAmount = orders.reduce((sum, o) => {
     if (o.status === 'Cancelled') return sum
@@ -3855,37 +4294,43 @@ imageFiles: [] as File[],
       label: 'Total Sarees',
       value: String(dashboardStats?.total_sarees?.count ?? products.length),
       change: dashboardStats?.total_sarees?.change ?? (products.length > 0 ? `+${products.length} in collection` : '0 this month'),
-      color: 'text-champagne',
+      color: 'text-[#063737]',
+      accentBg: 'bg-[#063737]/10',
     },
     {
       label: 'Total Orders',
       value: String(dashboardStats?.total_orders?.count ?? orders.length),
       change: dashboardStats?.total_orders?.change ?? (orders.length > 0 ? `+${orders.length} total` : '0 this week'),
-      color: 'text-wine',
+      color: 'text-[#8b263e]',
+      accentBg: 'bg-[#8b263e]/10',
     },
     {
       label: 'Total Sales',
       value: dashboardStats?.total_sales?.formatted ?? (totalSalesAmount >= 100000 ? `₹${(totalSalesAmount / 100000).toFixed(1)}L` : `₹${totalSalesAmount.toLocaleString('en-IN')}`),
       change: dashboardStats?.total_sales?.change ?? (totalSalesAmount > 0 ? `₹${totalSalesAmount.toLocaleString('en-IN')} total` : '₹0 this month'),
-      color: 'text-gold',
+      color: 'text-[#9e571c]',
+      accentBg: 'bg-[#9e571c]/10',
     },
     {
       label: 'Pending Orders',
       value: String(dashboardStats?.pending_orders?.count ?? pendingOrdersCount),
       change: dashboardStats?.pending_orders?.change ?? (pendingOrdersCount > 0 ? `${pendingOrdersCount} pending` : 'All fulfilled'),
-      color: 'text-warm-gray',
+      color: 'text-[#c25e00]',
+      accentBg: 'bg-[#c25e00]/10',
     },
     {
       label: 'Low Stock',
       value: String(dashboardStats?.low_stock?.count ?? lowStockCount),
       change: dashboardStats?.low_stock?.change ?? (lowStockCount > 0 ? `${lowStockCount} items low` : 'Stock healthy'),
-      color: 'text-wine',
+      color: 'text-[#b91c1c]',
+      accentBg: 'bg-[#b91c1c]/10',
     },
     {
       label: 'Customers',
       value: String(dashboardStats?.customers?.count ?? customers.length),
       change: dashboardStats?.customers?.change ?? (customers.length > 0 ? `+${customers.length} total` : '0 new'),
-      color: 'text-gold',
+      color: 'text-[#1e3a8a]',
+      accentBg: 'bg-[#1e3a8a]/10',
     },
   ]
 
@@ -4667,14 +5112,19 @@ setTimeout(() => {
   }
 }
 
-const deleteSaree = async (id: number) => {
-  if (!window.confirm('Are you sure you want to delete this saree?')) {
-    return
-  }
+const confirmDeleteSaree = (product: Product) => {
+  setDeleteConfirmProduct(product)
+  setDeleteActionError('')
+}
+
+const deleteSaree = async () => {
+  if (!deleteConfirmProduct || deleteInProgress) return
+  setDeleteInProgress(true)
+  setDeleteActionError('')
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/admin/products/${id}`,
+      `${API_BASE_URL}/api/admin/products/${deleteConfirmProduct.id}`,
       {
         method: 'DELETE',
         headers: {
@@ -4684,26 +5134,34 @@ const deleteSaree = async (id: number) => {
       }
     )
 
+    const responseData = await response.json().catch(() => ({}))
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      console.error(errorData)
-      alert('Failed to delete saree')
+      const msg = responseData.message || 'Failed to delete saree'
+      console.error('Delete failed:', responseData)
+      setDeleteActionError(msg)
+      setDeleteInProgress(false)
       return
     }
 
+    const deletedId = deleteConfirmProduct.id
     setProducts(current =>
-      current.filter(product => product.id !== id)
+      current.filter(product => product.id !== deletedId)
     )
-
+    setDeleteConfirmProduct(null)
+    setDeleteActionError('')
     setSuccessMessage('Saree deleted successfully!')
-
+    void loadDashboardStats()
+    void refreshStorefrontProducts().catch(() => {})
     setTimeout(() => {
       setSuccessMessage('')
-    }, 3000)
+    }, 4000)
 
   } catch (error) {
     console.error('Error deleting saree:', error)
-    alert('Something went wrong while deleting the saree')
+    setDeleteActionError(error instanceof Error ? error.message : 'Something went wrong while deleting the saree')
+  } finally {
+    setDeleteInProgress(false)
   }
 }
 
@@ -4798,40 +5256,87 @@ const updateSaree = async () => {
 
   return (
     <div className="min-h-screen bg-ivory flex flex-col lg:flex-row">
-      <div className="lg:hidden bg-charcoal px-4 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="font-serif text-xl text-champagne">Yaale</p>
-            <p className="text-warm-gray text-[10px] tracking-widest uppercase mt-0.5">Admin Panel</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select value={tab} onChange={event => setTab(event.target.value)}
-              className="max-w-[150px] rounded-full border border-[#4a3a32] bg-charcoal px-3 py-2 text-xs text-champagne outline-none">
-              {sidebarItems.map(item => <option key={item}>{item}</option>)}
-            </select>
-            <button onClick={() => setPage('home')} className="rounded-full border border-[#4a3a32] px-3 py-2 text-xs text-champagne" aria-label="View store">↗</button>
-          </div>
+      {/* Mobile top bar */}
+      <div className="lg:hidden bg-[#063737] px-4 py-3 flex items-center justify-between shadow-md z-30 sticky top-0">
+        <div>
+          <p className="font-serif text-lg text-[#e8d5b0]">Yaale</p>
+          <p className="text-[#a89070] text-[9px] tracking-widest uppercase leading-tight">Admin Panel</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[#c9a96e] text-xs font-medium">{tab}</span>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="ml-2 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-[#e8d5b0] hover:bg-white/20 transition-colors"
+            aria-label="Open menu"
+          >
+            <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+              <path d="M1 1h16M1 7h16M1 13h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </button>
         </div>
       </div>
-      {/* Sidebar */}
-      <aside className="w-60 bg-charcoal flex-shrink-0 flex flex-col hidden lg:flex">
-        <div className="p-6 border-b border-charcoal">
-          <p className="font-serif text-xl text-champagne">Yaale</p>
-          <p className="text-warm-gray text-[10px] tracking-widest uppercase mt-0.5">Admin Panel</p>
+
+      {/* Mobile sidebar drawer overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Mobile sidebar drawer */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#063737] flex flex-col transform transition-transform duration-300 ease-in-out lg:hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between px-6 py-5 border-b border-white/10">
+          <div>
+            <p className="font-serif text-xl text-[#e8d5b0]">Yaale</p>
+            <p className="text-[#a89070] text-[9px] tracking-widest uppercase mt-0.5">Admin Panel</p>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-[#e8d5b0] hover:bg-white/20"
+            aria-label="Close menu"
+          >
+            ✕
+          </button>
         </div>
         <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
           {sidebarItems.map(item => (
-            <button key={item} onClick={() => setTab(item)}
-              className={`w-full text-left px-4 py-2.5 rounded-2xl text-sm transition-all ${tab === item ? 'bg-champagne/20 text-champagne' : 'text-warm-gray hover:bg-charcoal hover:text-white'}`}>
+            <button key={item} onClick={() => { setTab(item); setSidebarOpen(false) }}
+              className={`w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-all ${tab === item ? 'bg-[#c9a96e]/25 text-[#e8d5b0] border border-[#c9a96e]/30' : 'text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0]'}`}>
               {item}
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-charcoal space-y-2">
-          <button onClick={() => setPage('home')} className="w-full text-left px-4 py-2.5 rounded-2xl text-sm text-warm-gray hover:bg-charcoal hover:text-white transition-all">
+        <div className="p-4 border-t border-white/10 space-y-2">
+          <button onClick={() => { setPage('home'); setSidebarOpen(false) }} className="w-full text-left px-4 py-3 rounded-xl text-sm text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0] transition-all">
             ← View Store
           </button>
-          <button className="w-full text-left px-4 py-2.5 rounded-2xl text-sm text-wine hover:bg-charcoal hover:text-white transition-all">
+          <button onClick={() => { onLogout(); setSidebarOpen(false) }} className="w-full text-left px-4 py-3 rounded-xl text-sm text-[#e57373] hover:bg-white/10 transition-all">
+            Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop Sidebar */}
+      <aside className="w-64 bg-[#063737] flex-shrink-0 flex flex-col hidden lg:flex min-h-screen sticky top-0 max-h-screen overflow-y-auto">
+        <div className="px-6 py-6 border-b border-white/10">
+          <p className="font-serif text-2xl text-[#e8d5b0]">Yaale</p>
+          <p className="text-[#a89070] text-[9px] tracking-widest uppercase mt-1">Admin Panel</p>
+        </div>
+        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+          {sidebarItems.map(item => (
+            <button key={item} onClick={() => setTab(item)}
+              className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${tab === item ? 'bg-[#c9a96e]/25 text-[#e8d5b0] border border-[#c9a96e]/30' : 'text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0]'}`}>
+              {item}
+            </button>
+          ))}
+        </nav>
+        <div className="p-4 border-t border-white/10 space-y-2">
+          <button onClick={() => setPage('home')} className="w-full text-left px-4 py-2.5 rounded-xl text-sm text-[#c8b89a] hover:bg-white/10 hover:text-[#e8d5b0] transition-all">
+            ← View Store
+          </button>
+          <button onClick={onLogout} className="w-full text-left px-4 py-2.5 rounded-xl text-sm text-[#e57373] hover:bg-white/10 transition-all font-medium">
             Logout
           </button>
         </div>
@@ -4841,79 +5346,99 @@ const updateSaree = async () => {
       <main className="min-w-0 flex-1 overflow-auto">
         <div className="p-4 sm:p-8">
           {/* Top bar */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="font-serif text-3xl text-charcoal">{tab}</h1>
+              <h1 className="font-serif text-2xl sm:text-3xl text-[#1a2e2e] font-semibold">{tab}</h1>
             </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setTab('Inbox')}
-                className="relative flex h-9 w-9 items-center justify-center rounded-full bg-charcoal text-champagne transition-colors hover:bg-charcoal"
+                className="relative flex h-9 w-9 items-center justify-center rounded-full bg-[#063737] text-[#e8d5b0] transition-colors hover:bg-[#063737]/80"
                 aria-label="Open inbox"
               >
                 <EnvelopeIcon />
                 {inboxMessages.filter(message => !message.is_read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-4 h-4 rounded-full bg-wine px-1 text-[9px] leading-4 text-white flex items-center justify-center">
+                  <span className="absolute -top-1 -right-1 min-w-4 h-4 rounded-full bg-red-600 px-1 text-[9px] leading-4 text-white flex items-center justify-center">
                     {Math.min(inboxMessages.filter(message => !message.is_read).length, 9)}
                   </span>
                 )}
               </button>
-              <div className="w-9 h-9 rounded-full bg-charcoal flex items-center justify-center">
-                <span className="text-champagne text-sm font-medium">A</span>
+              <div className="w-9 h-9 rounded-full bg-[#063737] flex items-center justify-center">
+                <span className="text-[#e8d5b0] text-sm font-semibold">A</span>
               </div>
             </div>
           </div>
 
+          {/* Global success message */}
+          {successMessage && (
+            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 px-5 py-3.5">
+              <span className="text-green-600 text-lg">✓</span>
+              <p className="text-sm font-medium text-green-800">{successMessage}</p>
+            </div>
+          )}
+
+          {/* Global error message */}
+          {errorMessage && (
+            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-3.5">
+              <span className="text-red-600 text-lg">✕</span>
+              <p className="text-sm font-medium text-red-800">{errorMessage}</p>
+              <button onClick={() => setErrorMessage('')} className="ml-auto text-red-400 hover:text-red-600 text-xs">Dismiss</button>
+            </div>
+          )}
+
           {tab === 'Dashboard' && (
             <>
               {/* Stats Grid */}
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-8">
                 {stats.map(s => (
-                  <div key={s.label} className="bg-white rounded-3xl border border-border p-5">
-                    <p className="text-xs tracking-wider uppercase text-warm-gray mb-2">{s.label}</p>
-                    <p className={`font-serif text-3xl ${s.color} mb-1`}>{s.value}</p>
-                    <p className="text-xs text-gold">{s.change}</p>
+                  <div key={s.label} className="bg-white rounded-2xl border border-[#e8ddd5] p-4 sm:p-5 shadow-sm">
+                    <p className="text-[10px] tracking-widest uppercase text-[#7a6a62] mb-2 font-medium">{s.label}</p>
+                    <p className={`font-serif text-2xl sm:text-3xl ${s.color} mb-1 font-semibold`}>{s.value}</p>
+                    <p className="text-xs text-[#9b7e55] font-medium">{s.change}</p>
                   </div>
                 ))}
               </div>
 
               {/* Recent Orders */}
-              <div className="bg-white rounded-3xl border border-border overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                  <h2 className="font-serif text-xl text-charcoal">Recent Orders</h2>
-                 <button
-  onClick={() => setTab('Orders')}
-  className="text-xs tracking-wider text-gold uppercase border-b border-gold/40"
->
-  View All
-</button>
+              <div className="bg-white rounded-2xl border border-[#e8ddd5] overflow-hidden shadow-sm">
+                <div className="flex items-center justify-between px-6 py-5 border-b border-[#f0e8e0]">
+                  <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">Recent Orders</h2>
+                  <button
+                    onClick={() => setTab('Orders')}
+                    className="text-xs tracking-wider text-[#c9a96e] uppercase border-b border-[#c9a96e]/40 font-medium hover:text-[#b8924a]"
+                  >
+                    View All
+                  </button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full min-w-[640px]">
                     <thead>
-                      <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                      <tr className="text-[10px] tracking-widest uppercase text-[#5a4a42] bg-[#faf6f1] font-semibold">
                         {['Order ID', 'Customer', 'Product', 'Amount', 'Payment', 'Status', 'Date'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                          <th key={h} className="text-left px-4 py-3 font-semibold">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
+                      {orders.length === 0 && !ordersLoading && (
+                        <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-[#7a6a62]">No orders yet.</td></tr>
+                      )}
                       {orders.map((o, i) => (
-                        <tr key={o.id} className={`border-t border-[#f0e9e0] text-sm ${i % 2 === 0 ? '' : 'bg-ivory/50'}`}>
-                          <td className="px-4 py-3 text-gold font-medium">{o.id}</td>
-                          <td className="px-4 py-3 text-charcoal">{o.customer_name}</td>
-                          <td className="px-4 py-3 text-charcoal">{o.product}</td>
-                          <td className="px-4 py-3 font-medium">
-  ₹{Number(o.amount ?? o.total_amount ?? 0).toLocaleString('en-IN')}
-</td>
-                          <td className="px-4 py-3"><span className={`${paymentStatusColor(o.payment_status)} text-xs px-2 py-0.5 rounded-full`}>{o.payment_status}</span></td>
-                          <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${statusColor[o.status]}`}>{o.status}</span></td>
-                          <td className="px-4 py-3 text-warm-gray">
-  {o.created_at
-    ? new Date(o.created_at).toLocaleDateString('en-IN')
-    : '—'}
-</td>
+                        <tr key={o.id} className={`border-t border-[#f0e8e0] text-sm ${i % 2 === 0 ? '' : 'bg-[#faf6f1]/50'}`}>
+                          <td className="px-4 py-3 text-[#c9a96e] font-semibold">#{o.id}</td>
+                          <td className="px-4 py-3 text-[#2d2018] font-medium">{o.customer_name}</td>
+                          <td className="px-4 py-3 text-[#4a3828]">{o.product}</td>
+                          <td className="px-4 py-3 font-semibold text-[#1a2e2e]">
+                            ₹{Number(o.amount ?? o.total_amount ?? 0).toLocaleString('en-IN')}
+                          </td>
+                          <td className="px-4 py-3"><span className={`${paymentStatusColor(o.payment_status)} text-xs px-2.5 py-1 rounded-full font-medium`}>{o.payment_status}</span></td>
+                          <td className="px-4 py-3"><span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColor[o.status] ?? 'bg-gray-50 text-gray-700'}`}>{o.status}</span></td>
+                          <td className="px-4 py-3 text-[#7a6a62]">
+                            {o.created_at
+                              ? new Date(o.created_at).toLocaleDateString('en-IN')
+                              : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -5378,26 +5903,32 @@ const updateSaree = async () => {
                 </div>
               </div>
 
-              <div className="bg-white rounded-[28px] border border-border overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                  <h2 className="font-serif text-xl text-charcoal">All Sarees</h2>
-                  <button onClick={() => setShowAddForm(true)} className="bg-charcoal text-champagne px-5 py-2 rounded-full text-xs tracking-widest uppercase">+ Add Saree</button>
+              <div className="bg-white rounded-2xl border border-[#e8ddd5] overflow-hidden shadow-sm">
+                <div className="flex items-center justify-between px-6 py-5 border-b border-[#f0e8e0]">
+                  <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">All Sarees</h2>
+                  <button onClick={() => setShowAddForm(true)} className="bg-[#063737] hover:bg-[#063737]/90 text-[#e8d5b0] px-5 py-2.5 rounded-full text-xs font-semibold tracking-wider uppercase transition-colors shadow-sm">+ Add Saree</button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full min-w-[720px]">
                     <thead>
-                      <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                      <tr className="text-[11px] tracking-wider uppercase text-[#3a2c26] bg-[#faf6f1] font-semibold border-b border-[#e8ddd5]">
                         {['Product', 'SKU', 'Category', 'Price', 'Stock', 'Status', 'Actions'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                          <th key={h} className="text-left px-4 py-3.5 font-semibold">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {products.map(p => (
-                        <tr key={p.id} className="border-t border-[#f0e9e0] text-sm">
+                      {productsLoading ? (
+                        <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-[#7a6a62]">Loading sarees...</td></tr>
+                      ) : productsError ? (
+                        <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-red-700">{productsError}</td></tr>
+                      ) : products.length === 0 ? (
+                        <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-[#7a6a62]">No sarees found in catalogue.</td></tr>
+                      ) : products.map(p => (
+                        <tr key={p.id} className="border-t border-[#f0e8e0] text-sm hover:bg-[#faf6f1]/50 transition-colors">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-12 rounded-xl overflow-hidden bg-[#f0e9dd] flex-shrink-0">
+                              <div className="w-10 h-12 rounded-xl overflow-hidden bg-[#f0e9dd] flex-shrink-0 border border-[#e8ddd5]">
                                <img
   src={p.images?.find(image => image.trim()) || p.image}
   alt=""
@@ -5412,35 +5943,35 @@ const updateSaree = async () => {
   }}
 />
                               </div>
-                              <span className="font-medium text-charcoal">{p.name}</span>
+                              <span className="font-medium text-[#1a2e2e]">{p.name}</span>
                               {p.isActive === false && (
-                                <span className="rounded-full bg-cream px-2 py-0.5 text-[10px] uppercase tracking-wider text-warm-gray">Hidden</span>
+                                <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-800 font-medium">Hidden</span>
                               )}
                             </div>
                           </td>
-                          <td className="px-4 py-3 text-warm-gray">{p.sku}</td>
-                          <td className="px-4 py-3 text-charcoal">{p.category}</td>
-                          <td className="px-4 py-3 font-medium">₹{p.price.toLocaleString('en-IN')}</td>
-                          <td className="px-4 py-3 text-charcoal">{p.stock ?? 0}</td>
+                          <td className="px-4 py-3 text-xs font-mono font-medium text-[#5a4a42]">{p.sku || '—'}</td>
+                          <td className="px-4 py-3 text-[#3a2e28] font-medium">{p.category}</td>
+                          <td className="px-4 py-3 font-semibold text-[#1a2e2e]">₹{p.price.toLocaleString('en-IN')}</td>
+                          <td className="px-4 py-3 font-medium text-[#1a2e2e]">{p.stock ?? 0}</td>
                           <td className="px-4 py-3">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${isPurchasable(p) ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${isPurchasable(p) ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
                               {isPurchasable(p) ? 'In Stock' : 'Out of Stock'}
                             </span>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex gap-2">
+                            <div className="flex items-center gap-3">
                               <button
-  onClick={() => editSaree(p)}
-  className="text-xs text-gold hover:underline"
->
-  Edit
-</button>
+                                onClick={() => editSaree(p)}
+                                className="text-xs font-semibold text-[#8b5a2b] hover:text-[#5a3a1b] hover:underline"
+                              >
+                                Edit
+                              </button>
                               <button
-  onClick={() => deleteSaree(p.id)}
-  className="text-xs text-wine hover:underline"
->
-  Delete
-</button>
+                                onClick={() => confirmDeleteSaree(p)}
+                                className="text-xs font-semibold text-red-700 hover:text-red-900 hover:underline"
+                              >
+                                Delete
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -5453,41 +5984,45 @@ const updateSaree = async () => {
           )}
 
           {tab === 'Inventory' && (
-            <div className="bg-white rounded-3xl border border-border overflow-hidden">
-              <div className="px-6 py-5 border-b border-border">
-                <h2 className="font-serif text-xl text-charcoal">Inventory Management</h2>
+            <div className="bg-white rounded-2xl border border-[#e8ddd5] overflow-hidden shadow-sm">
+              <div className="px-6 py-5 border-b border-[#f0e8e0]">
+                <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">Inventory Management</h2>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[720px]">
                   <thead>
-                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                    <tr className="text-[11px] tracking-wider uppercase text-[#3a2c26] bg-[#faf6f1] font-semibold border-b border-[#e8ddd5]">
                       {['Saree', 'SKU', 'Category', 'Stock', 'Price', 'Status'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                        <th key={h} className="text-left px-4 py-3.5 font-semibold">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {productsLoading ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">Loading inventory...</td>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-[#7a6a62]">Loading inventory...</td>
                       </tr>
                     ) : productsError ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-wine">{productsError}</td>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-red-700">{productsError}</td>
                       </tr>
                     ) : products.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">No inventory products found.</td>
+                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-[#7a6a62]">No inventory products found.</td>
                       </tr>
                     ) : products.map(p => {
                       const stock = p.stock ?? 0
                       const stockStatus = stock === 0 ? 'OUT OF STOCK' : stock <= 5 ? 'LOW STOCK' : 'IN STOCK'
-                      const sc = { 'IN STOCK': 'bg-green-50 text-green-700', 'LOW STOCK': 'bg-amber-50 text-amber-700', 'OUT OF STOCK': 'bg-red-50 text-red-700' }[stockStatus]
+                      const sc = {
+                        'IN STOCK': 'bg-green-50 text-green-800 border border-green-200',
+                        'LOW STOCK': 'bg-amber-50 text-amber-800 border border-amber-200',
+                        'OUT OF STOCK': 'bg-red-50 text-red-800 border border-red-200'
+                      }[stockStatus]
                       return (
-                        <tr key={p.id} className="border-t border-[#f0e9e0] text-sm">
-                          <td className="px-4 py-3 font-medium text-charcoal">{p.name}</td>
-                          <td className="px-4 py-3 text-warm-gray">{p.sku}</td>
-                          <td className="px-4 py-3">{p.category}</td>
+                        <tr key={p.id} className="border-t border-[#f0e8e0] text-sm hover:bg-[#faf6f1]/50 transition-colors">
+                          <td className="px-4 py-3 font-medium text-[#1a2e2e]">{p.name}</td>
+                          <td className="px-4 py-3 text-xs font-mono font-medium text-[#5a4a42]">{p.sku || '—'}</td>
+                          <td className="px-4 py-3 text-[#3a2e28] font-medium">{p.category}</td>
                           <td className="px-4 py-3">
                             <input
                               type="number"
@@ -5506,13 +6041,13 @@ const updateSaree = async () => {
                               }}
                               onBlur={event => { void saveInventoryStock(p, event.currentTarget.value) }}
                               onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
-                              className="w-16 border border-border rounded-lg px-2 py-1 text-center text-sm outline-none focus:border-champagne disabled:opacity-60"
+                              className="w-20 border border-[#d6c7bc] rounded-lg px-2.5 py-1 text-center text-sm font-semibold text-[#1a2e2e] outline-none focus:border-[#063737] disabled:opacity-60 bg-white"
                             />
-                            {inventoryErrors[p.id] && <p role="alert" className="mt-1 max-w-40 text-xs text-wine">{inventoryErrors[p.id]}</p>}
-                            {inventorySavingId === p.id && <p className="mt-1 text-xs text-warm-gray">Saving...</p>}
+                            {inventoryErrors[p.id] && <p role="alert" className="mt-1 max-w-40 text-xs text-red-700 font-medium">{inventoryErrors[p.id]}</p>}
+                            {inventorySavingId === p.id && <p className="mt-1 text-xs text-[#8a6840]">Saving...</p>}
                           </td>
-                          <td className="px-4 py-3 font-medium">₹{p.price.toLocaleString('en-IN')}</td>
-                          <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${sc}`}>{stockStatus}</span></td>
+                          <td className="px-4 py-3 font-semibold text-[#1a2e2e]">₹{p.price.toLocaleString('en-IN')}</td>
+                          <td className="px-4 py-3"><span className={`text-xs px-2.5 py-1 rounded-full font-medium ${sc}`}>{stockStatus}</span></td>
                         </tr>
                       )
                     })}
@@ -5523,16 +6058,16 @@ const updateSaree = async () => {
           )}
 
           {tab === 'Orders' && (
-            <div className="bg-white rounded-3xl border border-border overflow-hidden">
-              <div className="px-6 py-5 border-b border-border">
-                <h2 className="font-serif text-xl text-charcoal">All Orders</h2>
+            <div className="bg-white rounded-2xl border border-[#e8ddd5] overflow-hidden shadow-sm">
+              <div className="px-6 py-5 border-b border-[#f0e8e0]">
+                <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">All Orders</h2>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[820px]">
                   <thead>
-                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                    <tr className="text-[11px] tracking-wider uppercase text-[#3a2c26] bg-[#faf6f1] font-semibold border-b border-[#e8ddd5]">
                       {['Order ID', 'Customer', 'Product', 'Amount', 'Payment', 'Status', 'Date', 'Action'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                        <th key={h} className="text-left px-4 py-3.5 font-semibold">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -5541,14 +6076,14 @@ const updateSaree = async () => {
     <tr>
       <td
         colSpan={8}
-        className="px-4 py-8 text-center text-sm text-warm-gray"
+        className="px-4 py-8 text-center text-sm text-[#7a6a62]"
       >
         Loading orders...
       </td>
     </tr>
   ) : ordersError ? (
     <tr>
-      <td colSpan={8} role="alert" className="px-4 py-8 text-center text-sm text-wine">
+      <td colSpan={8} role="alert" className="px-4 py-8 text-center text-sm text-red-700">
         {ordersError}
       </td>
     </tr>
@@ -5556,7 +6091,7 @@ const updateSaree = async () => {
     <tr>
       <td
         colSpan={8}
-        className="px-4 py-8 text-center text-sm text-warm-gray"
+        className="px-4 py-8 text-center text-sm text-[#7a6a62]"
       >
         No orders found.
       </td>
@@ -5565,30 +6100,30 @@ const updateSaree = async () => {
     orders.map((o, i) => (
       <tr
         key={o.id}
-        className={`border-t border-[#f0e9e0] text-sm ${
-          i % 2 === 0 ? '' : 'bg-ivory/50'
+        className={`border-t border-[#f0e8e0] text-sm hover:bg-[#faf6f1]/50 transition-colors ${
+          i % 2 === 0 ? '' : 'bg-[#faf6f1]/30'
         }`}
       >
-        <td className="px-4 py-3 text-gold font-medium">
+        <td className="px-4 py-3 text-[#8b5a2b] font-semibold">
           {o.order_number}
         </td>
 
-        <td className="px-4 py-3">
+        <td className="px-4 py-3 font-medium text-[#1a2e2e]">
           {o.customer_name}
         </td>
 
-        <td className="px-4 py-3">
+        <td className="px-4 py-3 text-[#3a2e28]">
         {o.items?.[0]
   ? `${o.items[0].product_name} × ${o.items[0].quantity}`
   : '—'}
         </td>
 
-        <td className="px-4 py-3 font-medium">
+        <td className="px-4 py-3 font-semibold text-[#1a2e2e]">
          ₹{Number(o.total_amount ?? o.amount ?? 0).toLocaleString('en-IN')}
         </td>
 
         <td className="px-4 py-3">
-          <span className={`${paymentStatusColor(o.payment_status)} text-xs px-2 py-0.5 rounded-full`}>
+          <span className={`${paymentStatusColor(o.payment_status)} text-xs px-2.5 py-1 rounded-full font-medium`}>
             {o.payment_status}
           </span>
         </td>
@@ -5599,7 +6134,7 @@ const updateSaree = async () => {
               value={o.status}
               disabled={orderStatusSavingId !== null}
               onChange={event => { void updateOrderStatus(o, event.target.value) }}
-              className="w-full text-xs border border-border rounded-full px-3 py-1 outline-none disabled:opacity-60"
+              className="w-full text-xs border border-[#d6c7bc] rounded-full px-3 py-1.5 outline-none font-medium text-[#1a2e2e] bg-white disabled:opacity-60"
             >
               {[
                 'Pending',
@@ -5619,22 +6154,21 @@ const updateSaree = async () => {
               value={orderStatusNotes[o.id] ?? ''}
               disabled={orderStatusSavingId !== null}
               onChange={event => setOrderStatusNotes(current => ({ ...current, [o.id]: event.target.value }))}
-              className="w-full rounded-lg border border-border px-2 py-1 text-[11px] text-charcoal outline-none focus:border-champagne disabled:opacity-60"
+              className="w-full rounded-lg border border-[#d6c7bc] px-2.5 py-1 text-[11px] text-[#1a2e2e] outline-none focus:border-[#063737] disabled:opacity-60 bg-white"
             />
-            {orderStatusSavingId === o.id && <p className="text-[11px] text-warm-gray">Saving...</p>}
-            {orderStatusErrors[o.id] && <p role="alert" className="text-[11px] text-wine">{orderStatusErrors[o.id]}</p>}
+            {orderStatusSavingId === o.id && <p className="text-[11px] text-[#8a6840]">Saving...</p>}
+            {orderStatusErrors[o.id] && <p role="alert" className="text-[11px] text-red-700 font-medium">{orderStatusErrors[o.id]}</p>}
           </div>
         </td>
 
-        <td className="px-4 py-3 text-warm-gray">
+        <td className="px-4 py-3 text-[#5a4a42]">
           {new Date(o.created_at).toLocaleDateString('en-IN')}
         </td>
 
         <td className="px-4 py-3">
-          
           <button
             onClick={() => setSelectedOrder(o)}
-            className="text-xs text-gold hover:underline"
+            className="text-xs font-semibold text-[#063737] hover:underline px-2.5 py-1 rounded-full bg-[#063737]/10 hover:bg-[#063737]/20 transition-colors"
           >
             View
           </button>
@@ -5649,34 +6183,34 @@ const updateSaree = async () => {
           )}
 
           {tab === 'Customers' && (
-            <div className="bg-white rounded-3xl border border-border overflow-hidden">
-              <div className="px-6 py-5 border-b border-border">
-                <h2 className="font-serif text-xl text-charcoal">Customers</h2>
+            <div className="bg-white rounded-2xl border border-[#e8ddd5] overflow-hidden shadow-sm">
+              <div className="px-6 py-5 border-b border-[#f0e8e0]">
+                <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">Customers</h2>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[700px]">
                   <thead>
-                    <tr className="text-[10px] tracking-widest uppercase text-warm-gray bg-ivory">
+                    <tr className="text-[11px] tracking-wider uppercase text-[#3a2c26] bg-[#faf6f1] font-semibold border-b border-[#e8ddd5]">
                       {['Name', 'Email', 'Phone', 'Orders', 'Joined', 'Status'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 font-normal">{h}</th>
+                        <th key={h} className="text-left px-4 py-3.5 font-semibold">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {customersLoading ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">Loading customers...</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-[#7a6a62]">Loading customers...</td></tr>
                     ) : customersError ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-wine">{customersError}</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-red-700">{customersError}</td></tr>
                     ) : customers.length === 0 ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-warm-gray">No customers found.</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-[#7a6a62]">No customers found.</td></tr>
                     ) : customers.map(c => (
-                      <tr key={c.phone} className="border-t border-[#f0e9e0] text-sm">
-                        <td className="px-4 py-3 font-medium text-charcoal">{c.name}</td>
-                        <td className="px-4 py-3 text-warm-gray">{c.email || '—'}</td>
-                        <td className="px-4 py-3 text-warm-gray">{c.phone}</td>
-                        <td className="px-4 py-3">{c.orders}</td>
-                        <td className="px-4 py-3 text-warm-gray">{c.joined_at ? new Date(c.joined_at).toLocaleDateString('en-IN') : '—'}</td>
-                        <td className="px-4 py-3">{c.is_active === null ? '—' : <span className={`text-xs px-2 py-0.5 rounded-full ${c.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>}</td>
+                      <tr key={c.phone || c.email} className="border-t border-[#f0e8e0] text-sm hover:bg-[#faf6f1]/50 transition-colors">
+                        <td className="px-4 py-3 font-medium text-[#1a2e2e]">{c.name}</td>
+                        <td className="px-4 py-3 text-[#5a4a42]">{c.email || '—'}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-[#5a4a42]">{c.phone || '—'}</td>
+                        <td className="px-4 py-3 font-medium text-[#1a2e2e]">{c.orders}</td>
+                        <td className="px-4 py-3 text-[#5a4a42]">{c.joined_at ? new Date(c.joined_at).toLocaleDateString('en-IN') : '—'}</td>
+                        <td className="px-4 py-3">{c.is_active === null ? '—' : <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${c.is_active ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -5687,36 +6221,36 @@ const updateSaree = async () => {
 
           {tab === 'Categories' && (
             <div className="space-y-5">
-              <div className="bg-white rounded-[28px] border border-border p-5 sm:p-6">
+              <div className="bg-white rounded-2xl border border-[#e8ddd5] p-5 sm:p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-5">
-                  <h2 className="font-serif text-xl text-charcoal">Category Library</h2>
-                  <button onClick={addCategory} className="rounded-full bg-charcoal px-4 py-2 text-[10px] tracking-[0.24em] uppercase text-champagne">+ Add Category</button>
+                  <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">Category Library</h2>
+                  <button onClick={addCategory} className="rounded-full bg-[#063737] hover:bg-[#063737]/90 px-5 py-2.5 text-xs font-semibold tracking-wider uppercase text-[#e8d5b0] transition-colors shadow-sm">+ Add Category</button>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {categoriesLoading ? (
-                    <p className="text-sm text-warm-gray">Loading categories...</p>
+                    <p className="text-sm text-[#7a6a62]">Loading categories...</p>
                   ) : categoriesError ? (
-                    <p className="text-sm text-wine">{categoriesError}</p>
+                    <p className="text-sm text-red-700">{categoriesError}</p>
                   ) : categories.length === 0 ? (
-                    <p className="text-sm text-warm-gray">No categories found.</p>
+                    <p className="text-sm text-[#7a6a62]">No categories found.</p>
                   ) : categories.map(category => (
-                    <div key={category.id} className="rounded-3xl border border-border bg-ivory p-5">
+                    <div key={category.id} className="rounded-2xl border border-[#e8ddd5] bg-[#faf6f1] p-5 shadow-sm">
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
-                          <p className="text-[10px] tracking-[0.24em] uppercase text-gold">Category</p>
-                          <h3 className="font-serif text-2xl text-charcoal mt-2">{category.name}</h3>
+                          <p className="text-[10px] tracking-[0.24em] uppercase text-[#8b5a2b] font-semibold">Category</p>
+                          <h3 className="font-serif text-2xl text-[#1a2e2e] font-semibold mt-1">{category.name}</h3>
                         </div>
-                        <span className={`rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em] uppercase ${category.is_active ? 'bg-green-50 text-green-700' : 'bg-cream text-warm-gray'}`}>
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em] uppercase font-semibold ${category.is_active ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
                           {category.is_active ? 'Active' : 'Draft'}
                         </span>
                       </div>
-                      <p className="text-sm leading-relaxed text-warm-gray">{category.description}</p>
-                      <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-sm">
-                        <span className="text-charcoal font-medium">{category.products_count} products</span>
+                      <p className="text-sm leading-relaxed text-[#5a4a42]">{category.description || 'No description provided.'}</p>
+                      <div className="mt-5 flex items-center justify-between border-t border-[#e8ddd5] pt-4 text-sm">
+                        <span className="text-[#1a2e2e] font-medium">{category.products_count} products</span>
                         <div className="flex gap-3">
-                          <button onClick={() => editCategory(category)} className="text-gold hover:text-charcoal">Edit</button>
-                          <button onClick={() => deleteCategory(category)} className="text-wine hover:text-charcoal">Delete</button>
+                          <button onClick={() => editCategory(category)} className="text-xs font-semibold text-[#8b5a2b] hover:text-[#5a3a1b] hover:underline">Edit</button>
+                          <button onClick={() => deleteCategory(category)} className="text-xs font-semibold text-red-700 hover:text-red-900 hover:underline">Delete</button>
                         </div>
                       </div>
                     </div>
@@ -5825,33 +6359,33 @@ const updateSaree = async () => {
 
           {tab === 'Offers' && (
             <div className="space-y-5">
-              <div className="bg-white rounded-[28px] border border-border p-5 sm:p-6">
+              <div className="bg-white rounded-2xl border border-[#e8ddd5] p-5 sm:p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-5">
-                  <h2 className="font-serif text-xl text-charcoal">Offer Center</h2>
-                  <button onClick={openAddOffer} className="rounded-full bg-charcoal px-4 py-2 text-[10px] tracking-[0.24em] uppercase text-champagne">+ Add Offer</button>
+                  <h2 className="font-serif text-xl text-[#1a2e2e] font-semibold">Offer Center</h2>
+                  <button onClick={openAddOffer} className="rounded-full bg-[#063737] hover:bg-[#063737]/90 px-5 py-2.5 text-xs font-semibold tracking-wider uppercase text-[#e8d5b0] transition-colors shadow-sm">+ Add Offer</button>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {offersLoading ? (
-                    <p className="text-sm text-warm-gray">Loading offers...</p>
+                    <p className="text-sm text-[#7a6a62]">Loading offers...</p>
                   ) : offersError ? (
-                    <p className="text-sm text-wine">{offersError}</p>
+                    <p className="text-sm text-red-700">{offersError}</p>
                   ) : offers.length === 0 ? (
-                    <p className="text-sm text-warm-gray">No offers found.</p>
+                    <p className="text-sm text-[#7a6a62]">No offers found.</p>
                   ) : offers.map(offer => (
-                    <div key={offer.id} className="rounded-3xl border border-border bg-ivory p-5">
+                    <div key={offer.id} className="rounded-2xl border border-[#e8ddd5] bg-[#faf6f1] p-5 shadow-sm">
                       <div className="flex items-center justify-between gap-3 mb-3">
-                        <span className="rounded-full bg-cream px-2.5 py-1 text-[10px] tracking-[0.18em] uppercase text-wine">{offer.type}</span>
-                        <span className="text-[10px] tracking-[0.18em] uppercase text-warm-gray">{offer.status}</span>
+                        <span className="rounded-full bg-wine/10 border border-wine/20 px-2.5 py-1 text-[10px] tracking-[0.18em] uppercase text-wine font-semibold">{offer.type}</span>
+                        <span className="text-[10px] tracking-[0.18em] uppercase text-[#8b5a2b] font-semibold">{offer.status}</span>
                       </div>
-                      <h3 className="font-serif text-2xl text-charcoal">{offer.title}</h3>
-                      <p className="mt-3 text-xl font-medium text-charcoal">{offer.value}</p>
-                      <p className="mt-3 text-sm leading-relaxed text-warm-gray">{offer.description}</p>
-                      <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-sm">
-                        <span className="text-charcoal font-medium">{offer.status}</span>
+                      <h3 className="font-serif text-2xl text-[#1a2e2e] font-semibold">{offer.title}</h3>
+                      <p className="mt-2 text-xl font-semibold text-[#8b5a2b]">{offer.value}</p>
+                      <p className="mt-2 text-sm leading-relaxed text-[#5a4a42]">{offer.description}</p>
+                      <div className="mt-5 flex items-center justify-between border-t border-[#e8ddd5] pt-4 text-sm">
+                        <span className="text-[#1a2e2e] font-medium">{offer.status}</span>
                         <div className="flex gap-3">
-                          <button onClick={() => openEditOffer(offer)} className="text-gold hover:text-charcoal">Edit</button>
-                          <button onClick={() => openDeleteOffer(offer)} className="text-wine hover:text-charcoal">Delete</button>
+                          <button onClick={() => openEditOffer(offer)} className="text-xs font-semibold text-[#8b5a2b] hover:text-[#5a3a1b] hover:underline">Edit</button>
+                          <button onClick={() => openDeleteOffer(offer)} className="text-xs font-semibold text-red-700 hover:text-red-900 hover:underline">Delete</button>
                         </div>
                       </div>
                     </div>
@@ -5861,12 +6395,10 @@ const updateSaree = async () => {
             </div>
           )}
 
-      
-
-                    {!['Dashboard', 'Sarees', 'Inventory', 'Orders', 'Customers', 'Categories', 'Offers', 'Settings'].includes(tab) && (
-            <div className="bg-white rounded-3xl border border-border p-16 text-center">
-              <p className="font-serif text-2xl text-charcoal mb-2">{tab}</p>
-              <p className="text-warm-gray font-light">This section is coming soon.</p>
+          {!['Dashboard', 'Sarees', 'Inventory', 'Orders', 'Customers', 'Categories', 'Offers', 'Settings', 'Inbox'].includes(tab) && (
+            <div className="bg-white rounded-2xl border border-[#e8ddd5] p-16 text-center shadow-sm">
+              <p className="font-serif text-2xl text-[#1a2e2e] font-semibold mb-2">{tab}</p>
+              <p className="text-[#7a6a62] font-light">This section is coming soon.</p>
             </div>
           )}
         </div>
@@ -6129,6 +6661,94 @@ const updateSaree = async () => {
           </section>
         </div>
       )}
+
+      {/* Delete Saree Confirmation Modal */}
+      {deleteConfirmProduct && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!deleteInProgress) {
+              setDeleteConfirmProduct(null)
+              setDeleteActionError('')
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-saree-title"
+            className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl border border-[#e8ddd5] bg-[#faf6f1] p-6 sm:p-7 shadow-2xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-[10px] tracking-[0.28em] uppercase text-red-700 font-semibold">Confirm Deletion</p>
+                <h2 id="delete-saree-title" className="font-serif text-2xl text-[#1a2e2e] font-semibold mt-0.5">
+                  Delete Saree
+                </h2>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-2xl bg-white border border-[#e8ddd5] p-4 flex items-center gap-3.5 shadow-sm">
+              {deleteConfirmProduct.image ? (
+                <img
+                  src={deleteConfirmProduct.image}
+                  alt=""
+                  className="h-16 w-14 shrink-0 rounded-xl object-cover border border-[#e8ddd5]"
+                />
+              ) : (
+                <div className="h-16 w-14 shrink-0 rounded-xl bg-[#f0e8e0] flex items-center justify-center text-[10px] text-[#7a6a62]">
+                  No photo
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-[#1a2e2e] text-sm truncate">{deleteConfirmProduct.name}</p>
+                <p className="text-xs text-[#5a4a42] mt-0.5">SKU: <span className="font-semibold text-[#1a2e2e]">{deleteConfirmProduct.sku || '—'}</span> · {deleteConfirmProduct.category}</p>
+                <p className="text-xs text-[#9b7e55] font-semibold mt-0.5">₹{deleteConfirmProduct.price.toLocaleString('en-IN')}</p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-sm leading-relaxed text-[#5a4a42]">
+              Are you sure you want to permanently delete <strong className="text-[#1a2e2e]">"{deleteConfirmProduct.name}"</strong>? This will remove the saree from the store catalogue and Neon database. <span className="text-red-700 font-medium">This action cannot be undone.</span>
+            </p>
+
+            {deleteActionError && (
+              <div className="mt-4 rounded-xl bg-red-50 border border-red-200 p-3.5 text-xs text-red-800 font-medium leading-relaxed" role="alert">
+                {deleteActionError}
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-[#e8ddd5] pt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmProduct(null)
+                  setDeleteActionError('')
+                }}
+                disabled={deleteInProgress}
+                className="rounded-full px-5 py-2.5 text-xs font-semibold tracking-wider uppercase text-[#5a4a42] hover:bg-[#ede3da] hover:text-[#1a2e2e] disabled:opacity-40 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteSaree}
+                disabled={deleteInProgress}
+                className="rounded-full bg-red-700 px-6 py-2.5 text-xs font-semibold tracking-wider uppercase text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {deleteInProgress ? 'Deleting...' : 'Delete Saree'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }
@@ -6141,56 +6761,125 @@ function Footer({ setPage }: { setPage: (p: Page) => void }) {
 
   return (
     <footer className="bg-charcoal text-white mt-0">
-      <div className="max-w-7xl mx-auto px-6 sm:px-8 py-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
-        <div>
-          <img src={yaaleLogoJpeg} alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
-          <p className="text-white/50 text-sm font-light leading-relaxed">Handpicked sarees from India's finest weavers. Crafted for moments that matter.</p>
-          <address className="mt-3 text-sm text-white/60 font-light leading-relaxed not-italic">
-            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(footerAddress)}`} target="_blank" rel="noreferrer">
-              {footerAddress.split(',').map((line, index, lines) => (
-                <span key={`${line}-${index}`}>
-                  {line.trim()}
-                  {index < lines.length - 1 && <><br /></>}
-                </span>
+      <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 md:py-16">
+        {/* Mobile footer layout (< md) */}
+        <div className="md:hidden flex flex-col gap-8">
+          {/* Brand block */}
+          <div>
+            <img
+              src={yaaleLogoJpeg}
+              alt="Yaale, Soulful Weaves"
+              className="mb-3 h-[clamp(72px,22vw,110px)] w-[clamp(72px,22vw,110px)] object-contain object-left"
+            />
+            <p className="text-white/50 text-xs sm:text-sm font-light leading-relaxed">
+              Handpicked sarees from India's finest weavers. Crafted for moments that matter.
+            </p>
+            <address className="mt-2.5 text-xs sm:text-sm text-white/60 font-light leading-relaxed not-italic">
+              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(footerAddress)}`} target="_blank" rel="noreferrer">
+                {footerAddress.split(',').map((line, index, lines) => (
+                  <span key={`${line}-${index}`}>
+                    {line.trim()}
+                    {index < lines.length - 1 && <><br /></>}
+                  </span>
+                ))}
+              </a>
+            </address>
+            <div className="mt-2 space-y-0.5 text-xs sm:text-sm text-white/60 font-light">
+              <p>{footerPhone}</p>
+              <p>{footerEmail}</p>
+            </div>
+            <button
+              onClick={() => setPage('admin-login')}
+              className="mt-3 inline-flex items-center text-[10px] tracking-[0.25em] uppercase text-champagne hover:text-[#f2d8a3] transition-colors"
+            >
+              Admin
+            </button>
+          </div>
+
+          {/* Shop and Customer Care 2-col grid */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 max-[360px]:grid-cols-1">
+            <div>
+              <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Shop</p>
+              <div className="flex flex-col gap-2.5">
+                {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
+                  <button key={l} onClick={() => setPage('shop')} className="text-left text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light py-0.5">{l}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Customer Care</p>
+              <div className="flex flex-col gap-2.5">
+                {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
+                  <button key={l} onClick={() => setPage('contact')} className="text-left text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light py-0.5">{l}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Follow Us */}
+          <div>
+            <p className="text-champagne text-xs tracking-widest uppercase mb-3 font-medium">Follow Us</p>
+            <div className="flex flex-wrap gap-4">
+              <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light">Instagram</a>
+              <a href="https://wa.me/919150130613" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-xs sm:text-sm text-white/50 hover:text-champagne transition-colors font-light">WhatsApp</a>
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop footer layout (>= md - 100% untouched) */}
+        <div className="hidden md:grid md:grid-cols-4 gap-10">
+          <div>
+            <img src={yaaleLogoJpeg} alt="Yaale, Soulful Weaves" className="mb-4 h-[136px] w-[136px] object-contain object-left" />
+            <p className="text-white/50 text-sm font-light leading-relaxed">Handpicked sarees from India's finest weavers. Crafted for moments that matter.</p>
+            <address className="mt-3 text-sm text-white/60 font-light leading-relaxed not-italic">
+              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(footerAddress)}`} target="_blank" rel="noreferrer">
+                {footerAddress.split(',').map((line, index, lines) => (
+                  <span key={`${line}-${index}`}>
+                    {line.trim()}
+                    {index < lines.length - 1 && <><br /></>}
+                  </span>
+                ))}
+              </a>
+            </address>
+            <div className="mt-3 space-y-1 text-sm text-white/60 font-light">
+              <p>{footerPhone}</p>
+              <p>{footerEmail}</p>
+            </div>
+            <button onClick={() => setPage('admin-login')} className="mt-4 inline-flex items-center text-[10px] tracking-[0.25em] uppercase text-champagne hover:text-[#f2d8a3] transition-colors">
+              Admin
+            </button>
+          </div>
+          <div>
+            <p className="text-champagne text-xs tracking-widest uppercase mb-5">Shop</p>
+            <div className="space-y-3">
+              {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
+                <button key={l} onClick={() => setPage('shop')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
               ))}
-            </a>
-          </address>
-          <div className="mt-3 space-y-1 text-sm text-white/60 font-light">
-            <p>{footerPhone}</p>
-            <p>{footerEmail}</p>
+            </div>
           </div>
-          <button onClick={() => setPage('admin-login')} className="mt-4 inline-flex items-center text-[10px] tracking-[0.25em] uppercase text-champagne hover:text-[#f2d8a3] transition-colors">
-            Admin
-          </button>
-        </div>
-        <div>
-          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Shop</p>
-          <div className="space-y-3">
-            {['Soft Silk Sarees', 'Cotton Sarees', 'Semi Silk Sarees', 'New Arrivals'].map(l => (
-              <button key={l} onClick={() => setPage('shop')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
-            ))}
+          <div>
+            <p className="text-champagne text-xs tracking-widest uppercase mb-5">Customer Care</p>
+            <div className="space-y-3">
+              {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
+                <button key={l} onClick={() => setPage('contact')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
+              ))}
+            </div>
           </div>
-        </div>
-        <div>
-          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Customer Care</p>
-          <div className="space-y-3">
-            {['Contact Us', 'Order Tracking', 'Shipping Policy', 'No Refund Policy'].map(l => (
-              <button key={l} onClick={() => setPage('contact')} className="block text-sm text-white/50 hover:text-champagne transition-colors font-light">{l}</button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p className="text-champagne text-xs tracking-widest uppercase mb-5">Follow Us</p>
-          <div className="flex flex-col gap-3">
-            <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">Instagram</a>
-            <a href="https://wa.me/919150130613" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">WhatsApp</a>
+          <div>
+            <p className="text-champagne text-xs tracking-widest uppercase mb-5">Follow Us</p>
+            <div className="flex flex-col gap-3">
+              <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">Instagram</a>
+              <a href="https://wa.me/919150130613" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-champagne transition-colors font-light">WhatsApp</a>
+            </div>
           </div>
         </div>
       </div>
-      <div className="border-t border-charcoal px-6 sm:px-8 py-6">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+
+      {/* Bottom bar */}
+      <div className="border-t border-charcoal px-5 sm:px-8 py-5 md:py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-center">
           <p className="text-white/30 text-xs">© 2026 Yaale. All Rights Reserved.</p>
-          <div className="flex gap-5">
+          <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
             {['Privacy Policy', 'Terms', 'Shipping', 'No Refund Policy'].map(l => (
               <button key={l} className="text-white/30 text-xs hover:text-white/60 transition-colors">{l}</button>
             ))}

@@ -2,20 +2,16 @@
  * YAALE LUXURY MOTION & INTERACTION ENGINE
  * Built with GSAP + ScrollTrigger (pinned versions from CDN)
  *
- * Colour palette:
- * --bg-main: #FBFAF7
- * --bg-soft: #F3EEE8
- * --bg-dark: #2B1C1A
- * --maroon: #7A0C32
- * --maroon-deep: #4E1D16
- * --red: #880001
- * --terracotta: #A33B1B
- * --copper: #BC7442
- * --gold: #C9A227
- * --text-main: #2B1C1A
- * --text-muted: #8A7F7C
- * --line: #E3DCD6
- * --text-on-dark: #FBFAF7
+ * Current Colour Palette:
+ * --bg-main: #F4EAE2
+ * --bg-soft: #E8C9CF
+ * --bg-dark: #063737
+ * --maroon: #A25524 (terracotta/maroon)
+ * --copper: #C98F67
+ * --text-main: #302521
+ * --text-muted: #75645D
+ * --line: #EAD6D5
+ * --text-on-dark: #F4EAE2
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -273,62 +269,12 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 6. ENDLESS MARQUEE STRIP
+  // 6. ENDLESS MARQUEE STRIP (REMOVED)
   // ─────────────────────────────────────────────────────────────────────────────
   const insertMarquee = () => {
-    if (document.getElementById('yaale-luxury-marquee')) return;
-
-    const targetSection = document.querySelector('section.bg-cream');
-    if (!targetSection) return;
-
-    const marquee = document.createElement('div');
-    marquee.id = 'yaale-luxury-marquee';
-    marquee.className = 'yaale-marquee-container';
-
-    const words = [
-      'Kanjivaram Silk',
-      'Handcrafted Weaves',
-      'Timeless Drapes',
-      'Artisanal Zari',
-      'Bridal Celebrations',
-      'Festive Radiance',
-      'Pure Soft Silk',
-      'Graceful Heritage',
-    ];
-
-    const itemHtml = words
-      .map(
-        (word, idx) => `
-        <div class="yaale-marquee-item">
-          <span>${idx % 2 === 1 ? `<em>${word}</em>` : word}</span>
-          <span class="yaale-marquee-dot"></span>
-        </div>
-      `
-      )
-      .join('');
-
-    marquee.innerHTML = `
-      <div class="yaale-marquee-track" id="yaale-marquee-track">
-        ${itemHtml}
-        ${itemHtml}
-        ${itemHtml}
-      </div>
-    `;
-
-    targetSection.insertAdjacentElement('afterend', marquee);
-
-    const track = document.getElementById('yaale-marquee-track');
-    if (!track) return;
-
-    const marqueeTween = gsap.to(track, {
-      xPercent: -33.333,
-      duration: 24,
-      ease: 'none',
-      repeat: -1,
-    });
-
-    marquee.addEventListener('mouseenter', () => marqueeTween.pause());
-    marquee.addEventListener('mouseleave', () => marqueeTween.play());
+    const existing = document.getElementById('yaale-luxury-marquee');
+    if (existing) existing.remove();
+    document.querySelectorAll('.yaale-marquee-container').forEach((el) => el.remove());
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -693,8 +639,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─────────────────────────────────────────────────────────────────────────────
   const initAllEffects = () => {
     initWordReveals();
-    insertSectionDividers();
-    insertMarquee();
     initCategoryArchMasks();
     initProductDragsAndStaggers();
     initButtonsMotion();
