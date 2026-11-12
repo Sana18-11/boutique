@@ -31,6 +31,13 @@ declare global {
   }
 }
 
+// ── Shared category data (used by HomePage cards AND the mobile menu) ───────
+const SHOP_CATEGORIES = [
+  { title: 'Soft Silk Sarees', desc: 'Elegant traditional silk, woven for royalty.',     img: heroBigImg,         fallback: '/hero-big.webp',         cat: 'Soft Silk' },
+  { title: 'Cotton Sarees',    desc: 'Light, breathable, and timelessly graceful.',       img: brownCottonSareeImg, fallback: '/brown-cotton-saree.png', cat: 'Cotton'    },
+  { title: 'Semi Silk Sarees', desc: 'A refined blend of tradition and modernity.',       img: semiSilkSareeImg,   fallback: '/semi-silk-saree.webp',   cat: 'Semi Silk' },
+] as const
+
 // ── Types ──────────────────────────────────────────────────────────────────
 type Page = 'home' | 'shop' | 'product' | 'cart' | 'wishlist' | 'account' | 'account-sign-in' | 'checkout' | 'order-success' | 'order-tracking' | 'about' | 'contact' | 'admin-login' | 'admin-dashboard' | 'reset-password'
 // 'ALL' or any category name. Category names come from the admin's categories,
@@ -526,16 +533,18 @@ function AnnouncementBar() {
   )
 }
 
-function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCustomerLogout }: {
+function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCustomerLogout, onCategorySelect }: {
   page: Page
   setPage: (p: Page) => void
   cartCount: number
   wishlistCount: number
   customerSession: CustomerAuthSession | null
   onCustomerLogout: () => void
+  onCategorySelect: (cat: ShopCategoryFilter) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [catOpen, setCatOpen] = useState(false)
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 40)
@@ -548,6 +557,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = ''
+      setCatOpen(false)
     }
     return () => {
       document.body.style.overflow = ''
@@ -670,6 +680,70 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
                   { label: 'Home', href: 'home' },
                   { label: 'New Arrivals', href: 'shop' },
                   { label: 'Shop All', href: 'shop' },
+                ].map(item => (
+                  <button
+                    key={item.label}
+                    onClick={() => { setPage(item.href as Page); setMenuOpen(false) }}
+                    className="mobile-menu-row flex h-14 w-full items-center justify-between border-b border-border text-left text-[14px] sm:text-[15px] tracking-[0.18em] uppercase text-charcoal cursor-pointer"
+                  >
+                    <span className="shrink-0">{item.label}</span>
+                    <span className="shrink-0 ml-auto flex items-center pr-1 text-warm-gray text-xl select-none" aria-hidden="true">›</span>
+                  </button>
+                ))}
+
+                {/* Shop by Category accordion row */}
+                <button
+                  onClick={() => setCatOpen(o => !o)}
+                  aria-expanded={catOpen}
+                  aria-controls="menu-cat-sublist"
+                  className="menu-cat-toggle mobile-menu-row flex h-14 w-full items-center justify-between border-b border-border text-left text-[14px] sm:text-[15px] tracking-[0.18em] uppercase text-charcoal cursor-pointer"
+                >
+                  <span className="shrink-0">Shop by Category</span>
+                  <span
+                    className="shrink-0 ml-auto flex items-center pr-1 text-warm-gray text-xl select-none transition-transform duration-250"
+                    style={{ transform: catOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                    aria-hidden="true"
+                  >›</span>
+                </button>
+
+                {/* Category sub-list */}
+                <div
+                  id="menu-cat-sublist"
+                  className="menu-cat-sublist overflow-hidden"
+                  style={{
+                    display: 'grid',
+                    gridTemplateRows: catOpen ? '1fr' : '0fr',
+                    opacity: catOpen ? 1 : 0,
+                    transition: 'grid-template-rows 250ms ease, opacity 200ms ease',
+                  }}
+                >
+                  <div style={{ overflow: 'hidden' }}>
+                    <div className="border-l-2 border-[#A25524] ml-4 my-1">
+                      {/* All Sarees */}
+                      <button
+                        onClick={() => { onCategorySelect('ALL'); setPage('shop'); setMenuOpen(false) }}
+                        className="menu-cat-item flex w-full items-center gap-3 min-h-[48px] px-4 py-2 text-left cursor-pointer"
+                      >
+                        <span className="font-serif text-[15px] text-[#063737] font-normal normal-case tracking-normal">All Sarees</span>
+                      </button>
+                      {/* Category items */}
+                      {SHOP_CATEGORIES.map(c => (
+                        <button
+                          key={c.cat}
+                          onClick={() => { onCategorySelect(c.cat); setPage('shop'); setMenuOpen(false) }}
+                          className="menu-cat-item flex w-full items-center gap-3 min-h-[48px] px-4 py-2 text-left cursor-pointer"
+                        >
+                          <span className="shrink-0 w-8 h-8 rounded-full overflow-hidden border border-[#e8ddd5] bg-[#F4EAE2] flex-none">
+                            <img src={c.img} alt={c.title} width={32} height={32} loading="lazy" className="w-full h-full object-cover object-center" style={{ objectPosition: 'center 20%' }} />
+                          </span>
+                          <span className="font-serif text-[15px] text-[#063737] font-normal normal-case tracking-normal">{c.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {[
                   { label: 'Festive Edits', href: 'shop' },
                   { label: 'Best Sellers', href: 'shop' },
                   { label: 'Sale', href: 'shop' },
@@ -1245,29 +1319,7 @@ function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, on
           <h2 className="font-serif text-3xl sm:text-4xl md:text-5xl text-charcoal">Shop by Category</h2>
         </div>
         <div className="flex gap-3 overflow-x-auto px-1 pb-4 snap-x snap-mandatory sm:gap-6 md:grid md:grid-cols-3 md:overflow-visible md:px-0 md:pb-0">
-          {[
-            {
-              title: 'Soft Silk Sarees',
-              desc: 'Elegant traditional silk, woven for royalty.',
-              img: heroBigImg,
-              fallback: '/hero-big.webp',
-              cat: 'Soft Silk',
-            },
-            {
-              title: 'Cotton Sarees',
-              desc: 'Light, breathable, and timelessly graceful.',
-              img: brownCottonSareeImg,
-              fallback: '/brown-cotton-saree.png',
-              cat: 'Cotton',
-            },
-            {
-              title: 'Semi Silk Sarees',
-              desc: 'A refined blend of tradition and modernity.',
-              img: semiSilkSareeImg,
-              fallback: '/semi-silk-saree.webp',
-              cat: 'Semi Silk',
-            },
-          ].map(c => (
+          {SHOP_CATEGORIES.map(c => (
             <div key={c.cat} className="group relative w-[160px] sm:w-[220px] md:w-auto flex-shrink-0 snap-start cursor-pointer md:flex-shrink" onClick={() => { onCategorySelect(c.cat as Exclude<ShopCategoryFilter, 'ALL'>); setPage('shop') }}>
               <div className="relative mx-auto aspect-square w-full max-w-[430px] overflow-hidden rounded-full bg-gradient-to-br from-[#E8C9CF] to-[#F4EAE2]">
                 <img
@@ -8181,7 +8233,7 @@ useEffect(() => {
       {!isAdmin && (
         <>
           <AnnouncementBar />
-          <Header page={page} setPage={setPage} cartCount={cart.reduce((s, i) => s + i.qty, 0)} wishlistCount={wishlist.length} customerSession={customerSession} onCustomerLogout={logoutCustomer} />
+          <Header page={page} setPage={setPage} cartCount={cart.reduce((s, i) => s + i.qty, 0)} wishlistCount={wishlist.length} customerSession={customerSession} onCustomerLogout={logoutCustomer} onCategorySelect={setShopFilter} />
         </>
       )}
 
