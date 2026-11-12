@@ -1207,19 +1207,6 @@ function HomePage({ setPage, setSelectedProduct, onAdd, onWishlist, wishlist, on
             <h1 className="font-serif text-[clamp(2.15rem,8.5vw,2.75rem)] leading-[1.04] tracking-[-0.01em] text-[#063737] sm:text-6xl lg:text-[4.75rem]">
               Handwoven sarees, made to be passed down.
             </h1>
-            <p className="mb-7 sm:mb-9 mt-4 sm:mt-6 max-w-[460px] text-[clamp(15px,3.8vw,16px)] leading-relaxed text-[#75645D] sm:text-lg">
-              Kanjivaram silks, soft cottons and everyday handlooms, picked directly from weavers across South India.
-            </p>
-            <div className="max-md:flex max-md:flex-nowrap max-md:gap-3 md:flex md:flex-wrap md:gap-4 w-full md:w-auto">
-              <button onClick={() => setPage('shop')}
-                className="hero-btn-primary flex-1 min-w-0 md:flex-none md:w-auto min-h-[44px] flex items-center justify-center rounded-full bg-[#063737] max-md:px-3 max-md:py-3.5 max-md:text-[clamp(10px,3vw,12px)] max-md:tracking-[0.12em] md:px-8 md:py-4 md:text-[13px] font-medium uppercase md:tracking-[0.16em] text-white transition-colors duration-300 whitespace-nowrap text-center">
-                Shop sarees
-              </button>
-              <button onClick={() => setPage('about')}
-                className="hero-btn-secondary flex-1 min-w-0 md:flex-none md:w-auto min-h-[44px] flex items-center justify-center rounded-full border border-[#063737] bg-transparent max-md:px-3 max-md:py-3.5 max-md:text-[clamp(10px,3vw,12px)] max-md:tracking-[0.12em] md:px-8 md:py-4 md:text-[13px] font-medium uppercase md:tracking-[0.16em] text-[#063737] transition-colors duration-300 whitespace-nowrap text-center">
-                Our weavers
-              </button>
-            </div>
           </div>
 
           <div className="relative mx-auto max-md:h-auto max-md:aspect-[4/5] w-full max-w-[560px] md:h-[560px] lg:h-[600px]">
