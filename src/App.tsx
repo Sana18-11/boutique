@@ -629,7 +629,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
 
           {/* Icons: Wishlist, Bag, Account - tightly grouped with gap-1 to gap-2, 44px tap targets */}
           <div className="flex items-center gap-1 sm:gap-2">
-            <button onClick={() => setPage(customerSession ? 'wishlist' : 'account-sign-in')} className="relative flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#063737] hover:text-[#A25524] transition-colors cursor-pointer" aria-label="Wishlist">
+            <button onClick={() => setPage('wishlist')} className="relative flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center p-2 text-[#063737] hover:text-[#A25524] transition-colors cursor-pointer" aria-label="Wishlist">
               <HeartIcon />
               {wishlistCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-[#A25524] text-[#F4EAE2] text-[9px] rounded-full flex items-center justify-center font-medium shadow-xs">{wishlistCount}</span>}
             </button>
@@ -805,7 +805,7 @@ function Header({ page, setPage, cartCount, wishlistCount, customerSession, onCu
                       </>
                     )}
                     <button
-                      onClick={() => { setPage(customerSession ? 'wishlist' : 'account-sign-in'); setMenuOpen(false) }}
+                      onClick={() => { setPage('wishlist'); setMenuOpen(false) }}
                       className="mobile-account-row flex items-center gap-4 py-3 text-left cursor-pointer min-h-[44px]"
                     >
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-charcoal text-charcoal">
@@ -2169,14 +2169,16 @@ function WishlistPage({
   onWishlist,
   onAdd,
   setPage,
-  setSelectedProduct
+  setSelectedProduct,
+  customerSession,
 }: {
   wishlist: number[],
   isLoading: boolean,
   onWishlist: (id: number) => void,
   onAdd: (p: Product) => void,
   setPage: (p: Page) => void,
-  setSelectedProduct: (p: Product) => void
+  setSelectedProduct: (p: Product) => void,
+  customerSession: CustomerAuthSession | null,
 }) {
   const { products } = useProductsStore()
   const items = products.filter(p => wishlist.includes(p.id))
@@ -2201,7 +2203,13 @@ function WishlistPage({
   return (
     <div className="min-h-screen bg-ivory">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="font-serif text-3xl sm:text-4xl text-charcoal mb-8 sm:mb-10">Wishlist <span className="text-gold text-2xl font-light">({items.length})</span></h1>
+        <h1 className="font-serif text-3xl sm:text-4xl text-charcoal mb-3 sm:mb-4">Wishlist <span className="text-gold text-2xl font-light">({items.length})</span></h1>
+        {!customerSession && items.length > 0 && (
+          <p className="text-sm text-warm-gray mb-6">
+            Saved on this device for {GUEST_WISHLIST_TTL_MINUTES} minutes.{' '}
+            <button onClick={() => setPage('account-sign-in')} className="underline hover:text-charcoal transition-colors cursor-pointer">Sign in</button> to keep your wishlist.
+          </p>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
           {items.map(p => (
             <ProductCard
@@ -7645,6 +7653,42 @@ const ADMIN_SESSION_KEY = 'yaale_admin_session'
 const CUSTOMER_SESSION_KEY = 'yaale_customer_session'
 const CART_STORAGE_KEY = 'yaale_cart'
 
+// ── Guest wishlist cookie ──────────────────────────────────────────────────
+/** Change this to adjust how long guest hearts survive without a new tap. */
+const GUEST_WISHLIST_TTL_MINUTES = 30
+const GUEST_WISHLIST_COOKIE = 'yaale_guest_wishlist'
+
+/** Read guest wishlist ids from the cookie. Returns [] on any failure. */
+const readGuestWishlistCookie = (): number[] => {
+  try {
+    const match = document.cookie.split('; ').find(c => c.startsWith(GUEST_WISHLIST_COOKIE + '='))
+    if (!match) return []
+    const raw = decodeURIComponent(match.split('=').slice(1).join('='))
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)).slice(0, 100)
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** Write (or clear when ids==[]) guest wishlist ids to the cookie with sliding expiry. */
+const writeGuestWishlistCookie = (ids: number[]): void => {
+  try {
+    const secure = location.protocol === 'https:' ? '; Secure' : ''
+    if (ids.length === 0) {
+      document.cookie = `${GUEST_WISHLIST_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax${secure}`
+      return
+    }
+    const value = encodeURIComponent(JSON.stringify(ids.slice(0, 100)))
+    const maxAge = GUEST_WISHLIST_TTL_MINUTES * 60
+    document.cookie = `${GUEST_WISHLIST_COOKIE}=${value}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`
+  } catch {
+    // cookies may be blocked; silently ignore
+  }
+}
+
 export default function App() {
   const [page, setPageState] = useState<Page>('home')
   const [shopFilter, setShopFilter] = useState<ShopCategoryFilter>('ALL')
@@ -7734,7 +7778,7 @@ export default function App() {
   // sign-in first, then returns to that page after a successful sign-in.
   const pageAfterSignInRef = useRef<Page | null>(null)
   const guardPage = (requested: Page, signedIn: boolean): Page => {
-    if (!signedIn && (requested === 'wishlist' || requested === 'checkout')) {
+    if (!signedIn && requested === 'checkout') {
       pageAfterSignInRef.current = requested
       return 'account-sign-in'
     }
@@ -7842,7 +7886,7 @@ export default function App() {
         body: JSON.stringify({ product_id: productId }),
       }).catch(() => undefined) // 409 "already in wishlist" and removed products are fine to skip
     ))
-    setGuestWishlist([])
+    setGuestWishlist([])  // deletes the cookie (Max-Age=0)
   }
 
   const handleCustomerLoginSuccess = async (session: CustomerAuthSession) => {
@@ -7874,8 +7918,8 @@ export default function App() {
   }
 
   const logoutCustomer = async () => {
-    const session = customerSession
     sessionStorage.removeItem(CUSTOMER_SESSION_KEY)
+    writeGuestWishlistCookie([])  // ensure no old cookie lingers after sign-out
     setWishlist([])
     setWishlistLoading(false)
     setCustomerSession(null)
@@ -7905,7 +7949,7 @@ export default function App() {
       window.history.pushState({ page: 'account-sign-in' }, '', '#account-sign-in')
       setPageState('account-sign-in')
     }
-    // wishlist and checkout redirect to sign-in through guardPage.
+    // wishlist is now accessible without a session; only checkout redirects through guardPage.
   }
 
   const logoutAdmin = async () => {
@@ -7949,24 +7993,53 @@ export default function App() {
     ;(showWishlistToast as any)._timer = window.setTimeout(() => setWishlistToast(null), 1800)
   }
 
-  const getGuestWishlist = () => {
-    try {
-      const raw = window.localStorage.getItem('yaale_guest_wishlist')
-      const parsed = raw ? JSON.parse(raw) : []
-      return Array.isArray(parsed) ? parsed.filter((item): item is number => typeof item === 'number' && Number.isFinite(item)) : []
-    } catch (error) {
-      console.error('Unable to read guest wishlist:', error)
-      return []
-    }
-  }
+  const getGuestWishlist = readGuestWishlistCookie
 
-  const setGuestWishlist = (ids: number[]) => {
+  const setGuestWishlist = (ids: number[]) => writeGuestWishlistCookie(ids)
+
+  // One-time migration: move any ids from the old localStorage key into the cookie.
+  useEffect(() => {
+    if (customerSession) return
     try {
-      window.localStorage.setItem('yaale_guest_wishlist', JSON.stringify(ids))
-    } catch (error) {
-      console.error('Unable to persist guest wishlist:', error)
+      const legacy = window.localStorage.getItem('yaale_guest_wishlist')
+      if (legacy) {
+        const parsed: unknown = JSON.parse(legacy)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existing = readGuestWishlistCookie()
+          const merged = [...new Set([...existing, ...parsed.filter((x): x is number => typeof x === 'number' && Number.isFinite(x))])]
+          writeGuestWishlistCookie(merged)
+          setWishlist(merged)
+          merged.forEach(id => syncWishlistButtons(id, true))
+        }
+        window.localStorage.removeItem('yaale_guest_wishlist')
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cookie expiry watcher: clear guest hearts when the TTL is up.
+  useEffect(() => {
+    if (customerSession) return
+    const TTL_MS = GUEST_WISHLIST_TTL_MINUTES * 60 * 1000
+
+    const clearExpired = () => {
+      const ids = readGuestWishlistCookie()
+      if (ids.length === 0 && wishlist.length > 0) {
+        setWishlist([])
+        wishlist.forEach(id => syncWishlistButtons(id, false))
+      }
     }
-  }
+
+    const timer = window.setTimeout(clearExpired, TTL_MS)
+    const handleVisibility = () => { if (document.visibilityState === 'visible') clearExpired() }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  // We only want this to re-run when session changes (sign-in clears it).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerSession])
 
   const toggleWishlist = async (id: number) => {
     const isWishlisted = wishlist.includes(id)
@@ -8252,7 +8325,7 @@ useEffect(() => {
   />
 )}
         {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={setPage} />}
-        {page === 'wishlist' && <WishlistPage wishlist={wishlist} isLoading={wishlistLoading} onWishlist={toggleWishlist} onAdd={addToCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />}
+        {page === 'wishlist' && <WishlistPage wishlist={wishlist} isLoading={wishlistLoading} onWishlist={toggleWishlist} onAdd={addToCart} setPage={setPage} setSelectedProduct={setSelectedProduct} customerSession={customerSession} />}
         {page === 'checkout' && (
           <CheckoutPage
             setPage={setPage}
