@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, type FormEvent } from 'react'
-import brownCottonSareeImg from './assets/brown-cotton-saree.webp'
+import brownCottonSareeImg from './assets/brown-cotton-saree.png'
 import semiSilkSareeImg from './assets/semi-silk-saree.webp'
 import yaaleLogoTransparent from './assets/yaale-logo-transparent.png'
 import yaaleLogoTrimmed from './assets/yaale-logo-trimmed.png'
